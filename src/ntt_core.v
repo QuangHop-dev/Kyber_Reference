@@ -53,7 +53,7 @@ module ntt_core (
         .addr_a(addr_a), .addr_b(addr_b), .twiddle_addr(twiddle_addr)
     );
 
-    twiddle_rom #(.MEMFILE("D:/CRYSTALS-Kyber/test_3/ip/zeta_values.mem")) u_twiddle (
+    twiddle_rom #(.MEMFILE("/home/lucas_pham/Kyber_Reference/src/zeta_values.mem")) u_twiddle (
         .clk(clk), .addr(twiddle_addr), .dout(zeta)
     );
 

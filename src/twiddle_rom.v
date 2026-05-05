@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 module twiddle_rom #(
-    parameter MEMFILE = "D:/CRYSTALS-Kyber/test_3/ip/zeta_values.mem"
+    parameter MEMFILE = "/home/lucas_pham/Kyber_Reference/src/zeta_values.mem"
 )(
     input  wire clk,
     input  wire [6:0] addr,         // Địa chỉ 7-bit (0 - 127)

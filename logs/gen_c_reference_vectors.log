@@ -1,0 +1,8 @@
+[INFO] Generating C-reference vectors for Kyber512...
+[INFO] Using C reference dir: /home/lucas_pham/Kyber_Reference/kyber/ref/ref
+[INFO] Building Kyber512 with KYBER_K=2
+[OK] wrote vectors/c_ref_512_pk.mem (800 bytes)
+[OK] wrote vectors/c_ref_512_sk.mem (1632 bytes)
+[OK] wrote vectors/c_ref_512_ct.mem (768 bytes)
+[OK] wrote vectors/c_ref_512_ss_enc.mem (32 bytes)
+[OK] wrote vectors/c_ref_512_ss_dec.mem (32 bytes)

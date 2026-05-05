@@ -181,7 +181,7 @@ module sponge(
                     end
                 end
 
-                SQUEEZE1: begin
+                /*SQUEEZE1: begin
                     if (saved_is_sha3 && saved_out_len_type == 3'd0) begin
                         dout[255:0] <= sponge_state[255:0];
                         done <= 1'b1;
@@ -200,7 +200,33 @@ module sponge(
                         f_start <= 1'b1;
                         state <= SQUEEZE2P;
                     end
-                end
+                end*/
+                
+                SQUEEZE1: begin
+		    // out_len_type:
+		    // 0 -> 32 bytes  / 256 bits  : H, KDF
+		    // 1 -> 64 bytes  / 512 bits  : G, XOF short
+		    // 2 -> 128 bytes / 1024 bits : PRF eta2
+		    // 3 -> 192 bytes / 1536 bits : PRF eta3
+
+		    if (saved_out_len_type == 3'd0) begin
+			dout[255:0] <= sponge_state[255:0];
+			done <= 1'b1;
+			state <= IDLE;
+		    end else if (saved_out_len_type == 3'd1) begin
+			dout[511:0] <= sponge_state[511:0];
+			done <= 1'b1;
+			state <= IDLE;
+		    end else if (saved_out_len_type == 3'd2) begin
+			dout[1023:0] <= sponge_state[1023:0];
+			done <= 1'b1;
+			state <= IDLE;
+		    end else begin
+			dout[1087:0] <= sponge_state[1087:0];
+			f_start <= 1'b1;
+			state <= SQUEEZE2P;
+		    end
+		end
 
                 SQUEEZE2P: begin
                     if (f_done) begin

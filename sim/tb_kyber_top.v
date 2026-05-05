@@ -36,6 +36,7 @@ module tb_kyber_top;
     integer mode_sel;
     integer check_ref;
     integer compare_errors;
+    integer dump_ref;
 
     kyber_main_fsm uut (
         .clk(clk),
@@ -50,7 +51,10 @@ module tb_kyber_top;
         .ext_addr(ext_addr),
         .ext_dout(ext_dout),
         .ext_din(ext_din),
-        .ext_ready(1'b1)
+        //.ext_ready(1'b1)
+    	.ext_ready(1'b1),
+        .seed_in(DUMMY_SEED),
+        .seed_valid(1'b1)
     );
 
     assign ext_din = (ext_addr < 8192) ? tb_ram[ext_addr] : 32'd0;
@@ -60,33 +64,36 @@ module tb_kyber_top;
     function integer get_pk_bytes;
         input [1:0] mk;
         begin
-            case (mk)
+            /*case (mk)
                 2'b00: get_pk_bytes = 800;
                 2'b01: get_pk_bytes = 1184;
                 default: get_pk_bytes = 1568;
-            endcase
+            endcase*/
+            get_pk_bytes = 800;
         end
     endfunction
 
     function integer get_sk_bytes;
         input [1:0] mk;
         begin
-            case (mk)
+            /*case (mk)
                 2'b00: get_sk_bytes = 1632;
                 2'b01: get_sk_bytes = 2400;
                 default: get_sk_bytes = 3168;
-            endcase
+            endcase*/
+            get_sk_bytes = 1632;
         end
     endfunction
 
     function integer get_ct_bytes;
         input [1:0] mk;
         begin
-            case (mk)
+            /*case (mk)
                 2'b00: get_ct_bytes = 768;
                 2'b01: get_ct_bytes = 1088;
                 default: get_ct_bytes = 1568;
-            endcase
+            endcase*/
+            get_ct_bytes = 768;
         end
     endfunction
 
@@ -179,12 +186,29 @@ module tb_kyber_top;
             end
         end
     endtask
+    
+    task dump_mem_file;
+        input string fname;
+        input integer base_word;
+        input integer total_bytes;
+        integer i, fd;
+        begin
+            fd = $fopen(fname, "w");
+            if (fd == 0) begin
+                $display("LOI: khong mo duoc file %s", fname);
+            end else begin
+                for (i = 0; i < total_bytes; i = i + 1)
+                    $fwrite(fd, "%02x\n", tb_ram[base_word + i][7:0]);
+                $fclose(fd);
+            end
+        end
+    endtask
 
     task dump_mode_artifacts;
         input [1:0] mk;
         input integer ct_bytes;
         begin
-            case (mk)
+            /*case (mk)
                 2'b00: begin
                     dump_hex_file("rtl_ct_512.hex", CT_BASE_WORD, ct_bytes);
                 end
@@ -194,9 +218,45 @@ module tb_kyber_top;
                 default: begin
                     dump_hex_file("rtl_ct_1024.hex", CT_BASE_WORD, ct_bytes);
                 end
-            endcase
+            endcase*/
+            dump_hex_file("rtl_ct_512.hex", CT_BASE_WORD, ct_bytes);
         end
     endtask
+
+
+    task dump_ref_vectors;
+        input [1:0] mk;
+        input integer pk_bytes;
+        input integer sk_bytes;
+        input integer ct_bytes;
+        reg [31:0] mode_tag;
+        begin
+            mode_tag = "512";
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_pk.mem"}, PK_BASE_WORD, pk_bytes);
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_sk.mem"}, SK_BASE_WORD, sk_bytes);
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_ct.mem"}, CT_BASE_WORD, ct_bytes);
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_ss_enc.mem"}, SS_BASE_WORD, 32);
+        end
+    endtask
+    
+    /*task dump_ref_vectors;
+        input [1:0] mk;
+        input integer pk_bytes;
+        input integer sk_bytes;
+        input integer ct_bytes;
+        reg [31:0] mode_tag;
+        begin
+            case (mk)
+                2'b00: mode_tag = "512";
+                2'b01: mode_tag = "768";
+                default: mode_tag = "1024";
+            endcase
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_pk.mem"}, PK_BASE_WORD, pk_bytes);
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_sk.mem"}, SK_BASE_WORD, sk_bytes);
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_ct.mem"}, CT_BASE_WORD, ct_bytes);
+            dump_mem_file({"vectors/c_ref_", mode_tag, "_ss_enc.mem"}, SS_BASE_WORD, 32);
+        end
+    endtask*/
 
     task run_mode_report;
         input [1:0] mk;
@@ -209,11 +269,12 @@ module tb_kyber_top;
             pk_bytes = get_pk_bytes(mk);
             sk_bytes = get_sk_bytes(mk);
             ct_bytes = get_ct_bytes(mk);
-            case (mk)
+            /*case (mk)
                 2'b00: mode_tag = "512";
                 2'b01: mode_tag = "768";
                 default: mode_tag = "1024";
-            endcase
+            endcase*/
+            mode_tag = "512";
 
             $display("\n==================================================");
             $display("MODE: %s", mode_name);
@@ -255,6 +316,16 @@ module tb_kyber_top;
             print_hex_block("DECAPS SHARED SECRET", SS_BASE_WORD, 32);
             if (check_ref != 0) begin
                 compare_with_file({"vectors/c_ref_", mode_tag, "_ss_dec.mem"}, SS_BASE_WORD, 32, "DECAPS SHARED SECRET");
+            end
+            
+            if (dump_ref != 0) begin
+                dump_ref_vectors(mk, pk_bytes, sk_bytes, ct_bytes);
+                dump_mem_file({"vectors/c_ref_", mode_tag, "_ss_dec.mem"}, SS_BASE_WORD, 32);
+            end
+            
+            if (dump_ref != 0) begin
+                dump_ref_vectors(mk, pk_bytes, sk_bytes, ct_bytes);
+                dump_mem_file({"vectors/c_ref_", mode_tag, "_ss_dec.mem"}, SS_BASE_WORD, 32);
             end
 
             $display("==================================================\n");
@@ -306,17 +377,21 @@ module tb_kyber_top;
         mode_sel = 0;
         check_ref = 0;
         compare_errors = 0;
+        dump_ref = 0;
         if (!$value$plusargs("MODE=%d", mode_sel))
             mode_sel = 0;
         if (!$value$plusargs("CHECK_REF=%d", check_ref))
             check_ref = 0;
+        clear_tb_ram();
+        if (!$value$plusargs("DUMP_REF=%d", dump_ref))
+            dump_ref = 0;
         clear_tb_ram();
 
         #100;
         rst = 1'b0;
         #50;
 
-        if (mode_sel == 512) begin
+        /*if (mode_sel == 512) begin
             mode_k = 2'b00;
             clear_tb_ram();
             pulse_reset_clean();
@@ -346,7 +421,12 @@ module tb_kyber_top;
             clear_tb_ram();
             pulse_reset_clean();
             run_mode_report(2'b10, "Kyber1024 (k=4)");
-        end
+        end*/
+        
+        mode_k = 2'b00;
+        clear_tb_ram();
+        pulse_reset_clean();
+        run_mode_report(2'b00, "Kyber512 (k=2)");
 
         $display("--------------------------------------------------");
         if (check_ref != 0) begin

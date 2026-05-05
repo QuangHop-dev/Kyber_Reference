@@ -20,6 +20,10 @@ module kyber_main_fsm (
     output reg  [31:0] ext_dout,
     input  wire [31:0] ext_din,
     input  wire        ext_ready,
+    
+    // External deterministic seed input (replaces internal TRNG block)
+    input  wire [511:0] seed_in,
+    input  wire         seed_valid,
 
     output wire [7:0]  state_dbg
 );
@@ -60,7 +64,9 @@ module kyber_main_fsm (
     reg [11:0] dma_cnt;
     reg [2:0]  loop_i, loop_j;
     reg [3:0]  dec_phase;
-    wire [2:0] k_val = {1'b0, mode_k} + 3'd2; // 2/3/4 for Kyber512/768/1024
+    //wire [2:0] k_val = {1'b0, mode_k} + 3'd2; // 2/3/4 for Kyber512/768/1024
+    wire [1:0] mode_k_locked = 2'b00; // Kyber512 only
+    wire [2:0] k_val = 3'd2; // locked to Kyber512
     wire       ntt_dec_intt_gs_en;
     // Buffers used by streaming hash/pack paths.
     // Replaced flat registers with BRAM modules for LUT optimization
@@ -141,9 +147,14 @@ module kyber_main_fsm (
 
 
 
-    // --- 3.1 TRNG ---
+    /*// --- 3.1 TRNG ---
     reg        trng_trigger; reg [1:0] trng_req_bytes; wire trng_valid; wire [511:0] trng_data;
-    top_trng u_trng (.clk(clk), .rst(rst), .trigger(trng_trigger), .req_bytes(trng_req_bytes), .rand_data(trng_data), .valid(trng_valid));
+    top_trng u_trng (.clk(clk), .rst(rst), .trigger(trng_trigger), .req_bytes(trng_req_bytes), .rand_data(trng_data), .valid(trng_valid));*/
+    
+    // --- 3.1 External seed interface (TRNG removed) ---
+    wire trng_valid; wire [511:0] trng_data;
+    assign trng_valid = seed_valid;
+    assign trng_data  = seed_in;
 
     // --- 3.2 Hash Wrapper ---
     reg hash_start; reg [2:0] hash_cmd; reg [1087:0] hash_din; reg [7:0] hash_bytes; reg hash_prf_eta3;
@@ -205,7 +216,7 @@ module kyber_main_fsm (
     // Đọc Twiddle Factor cho PWMA (Xử lý Item #17)
     wire [15:0] pwma_zeta_real;
     wire [6:0]  pwma_zeta_addr;
-    twiddle_rom #(.MEMFILE("D:/CRYSTALS-Kyber/test_3/ip/zeta_values_pwma.mem")) u_twiddle_pwma ( 
+    twiddle_rom #(.MEMFILE("/home/lucas_pham/Kyber_Reference/src/zeta_values_pwma.mem")) u_twiddle_pwma ( 
         .clk(clk), .addr(pwma_zeta_addr), .dout(pwma_zeta_real)
     );
 
@@ -229,8 +240,9 @@ module kyber_main_fsm (
     reg cmp_start; wire cmp_done, cmp_not_equal; reg [10:0] cmp_len; wire [10:0] cmp_addr_c, cmp_addr_c_prime; reg [31:0] cmp_data_c, cmp_data_c_prime;
     kyber_comparator u_cmp (.clk(clk), .rst(rst), .start(cmp_start), .data_len(cmp_len), .addr_c(cmp_addr_c), .data_c(cmp_data_c), .addr_c_prime(cmp_addr_c_prime), .data_c_prime(cmp_data_c_prime), .not_equal(cmp_not_equal), .done(cmp_done));
     reg comp_op; reg [3:0] comp_d; wire signed [15:0] comp_out; wire signed [15:0] comp_in;
-    kyber_compressor u_comp (.mode_k(mode_k), .mode_op(comp_op), .d_bits(comp_d), .in_val(comp_in), .out_val(comp_out));
-
+    //kyber_compressor u_comp (.mode_k(mode_k), .mode_op(comp_op), .d_bits(comp_d), .in_val(comp_in), .out_val(comp_out));
+    kyber_compressor u_comp (.mode_op(comp_op), .d_bits(comp_d), .in_val(comp_in), .out_val(comp_out));
+	
     // =========================================================================
     // 4. ZERO-COPY ROUTING
     // =========================================================================
@@ -261,12 +273,16 @@ module kyber_main_fsm (
     wire ct_pack_ext_ready;
     reg [2:0] pwma_sp_poly_idx;
     reg signed [15:0] add_main_d1, add_main_d2, add_main_d3, add_main_d4;
-    wire [3:0] dec_u_group_sz      = (mode_k == 2'b10) ? 4'd8 : 4'd4;
+    /*wire [3:0] dec_u_group_sz      = (mode_k == 2'b10) ? 4'd8 : 4'd4;
     wire [3:0] dec_u_bytes_per_grp = (mode_k == 2'b10) ? 4'd11 : 4'd5;
-    wire [6:0] dec_u_groups_per_poly = (mode_k == 2'b10) ? 7'd32 : 7'd64;
+    wire [6:0] dec_u_groups_per_poly = (mode_k == 2'b10) ? 7'd32 : 7'd64;*/
+    wire [3:0] dec_u_group_sz      = (mode_k_locked == 2'b10) ? 4'd8 : 4'd4;
+    wire [3:0] dec_u_bytes_per_grp = (mode_k_locked == 2'b10) ? 4'd11 : 4'd5;
+    wire [6:0] dec_u_groups_per_poly = (mode_k_locked == 2'b10) ? 7'd32 : 7'd64;
     wire [9:0] dec_u_total_groups  = {3'd0, k_val} * {3'd0, dec_u_groups_per_poly};
     wire [3:0] dec_v_group_sz      = 4'd8;
-    wire [3:0] dec_v_bytes_per_grp = (mode_k == 2'b10) ? 4'd5 : 4'd4;
+    //wire [3:0] dec_v_bytes_per_grp = (mode_k == 2'b10) ? 4'd5 : 4'd4;
+    wire [3:0] dec_v_bytes_per_grp = (mode_k_locked == 2'b10) ? 4'd5 : 4'd4;
     // Keep DEC accumulator away from pk coeff window [0..k*256-1].
     // Otherwise DEC decomp overwrites pk and DEC re-enc compare always fails.
     localparam [11:0] DEC_ACC_BASE = ENC_U_BASE;
@@ -344,7 +360,7 @@ module kyber_main_fsm (
         .clk(clk),
         .rst(rst),
         .start(ct_pack_start),
-        .mode_k(mode_k),
+        //.mode_k(mode_k),
         .ct_base_addr(CT_EXT_BASE),
         .u_addr(ct_pack_u_addr),
         .u_coeff_din(ct_pack_u_din),
@@ -412,9 +428,11 @@ module kyber_main_fsm (
         base_v = 12'd0;
         if (state == S_DEC_DECOMP) begin
             if (dec_phase == 4'd0) begin
-                dec_codec_op_w = (mode_k == 2'b10) ? 3'd3 : 3'd1; // UNPACK_U11/U10
+                //dec_codec_op_w = (mode_k == 2'b10) ? 3'd3 : 3'd1; // UNPACK_U11/U10
+            	dec_codec_op_w = (mode_k_locked == 2'b10) ? 3'd3 : 3'd1; // UNPACK_U11/U10
             end else if (dec_phase == 4'd1) begin
-                dec_codec_op_w = (mode_k == 2'b10) ? 3'd7 : 3'd5; // UNPACK_V5/V4
+                //dec_codec_op_w = (mode_k == 2'b10) ? 3'd7 : 3'd5; // UNPACK_V5/V4
+                dec_codec_op_w = (mode_k_locked == 2'b10) ? 3'd7 : 3'd5; // UNPACK_V5/V4
             end
         end
     end
@@ -423,16 +441,20 @@ module kyber_main_fsm (
     // 5. MAIN FSM
     // =========================================================================
 
-    reg trng_sent, hash_sent, cbd_sent, ntt_sent, pwma_sent, cmp_sent, gm_sent;
+    //reg trng_sent, hash_sent, cbd_sent, ntt_sent, pwma_sent, cmp_sent, gm_sent;
+    reg hash_sent, cbd_sent, ntt_sent, pwma_sent, cmp_sent, gm_sent;
     reg ct_pack_sent;
-    wire eta1_is_3 = (mode_k == 2'b00);
+    //wire eta1_is_3 = (mode_k == 2'b00);
+    wire eta1_is_3 = (mode_k_locked == 2'b00);
     assign ntt_dec_intt_gs_en =
         ((state == S_DEC_DECOMP) && (dec_phase == 4'd5)) ||
         (state == S_ENC_INTT_U) ||
         (state == S_ENC_INTT_V);
     wire [11:0] sk_ram_base = {9'd0, k_val} * 12'd256; // after t[0..k-1]
-    wire [11:0] ct_bytes_total = (mode_k == 2'b00) ? 12'd768 :
-                                 (mode_k == 2'b01) ? 12'd1088 : 12'd1568;
+    /*wire [11:0] ct_bytes_total = (mode_k == 2'b00) ? 12'd768 :
+                                 (mode_k == 2'b01) ? 12'd1088 : 12'd1568;*/
+    wire [11:0] ct_bytes_total = (mode_k_locked == 2'b00) ? 12'd768 :
+                                 (mode_k_locked == 2'b01) ? 12'd1088 : 12'd1568;
     wire [11:0] enc_u_coeff_total = {9'd0, k_val} * 12'd256;
 
     // --- Key pack/hash helpers ---
@@ -485,9 +507,11 @@ module kyber_main_fsm (
         if (rst) begin
             state <= S_IDLE; mux_sel <= 0; ntt_mux_sel <= 0; done <= 0; busy <= 0;
             ext_we <= 0; ext_re <= 0; ext_addr <= 0; ext_dout <= 0;
-            trng_trigger <= 0; hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0; gm_transposed <= 1'b0;
+            //trng_trigger <= 0; hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0; gm_transposed <= 1'b0;
+            hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0; gm_transposed <= 1'b0;
             hash_stream_en <= 0; hash_stream_valid <= 0; hash_stream_last <= 0; hash_stream_din <= 1088'd0; hash_stream_bytes <= 8'd0;
-            trng_sent <= 0; hash_sent <= 0; cbd_sent <= 0; ntt_sent <= 0; pwma_sent <= 0; cmp_sent <= 0; gm_sent <= 0;
+            //trng_sent <= 0; hash_sent <= 0; cbd_sent <= 0; ntt_sent <= 0; pwma_sent <= 0; cmp_sent <= 0; gm_sent <= 0;
+            hash_sent <= 0; cbd_sent <= 0; ntt_sent <= 0; pwma_sent <= 0; cmp_sent <= 0; gm_sent <= 0;
             ct_pack_sent <= 1'b0;
             fsm_we_a <= 0; fsm_we_b <= 0; fsm_ntt_we <= 0; hash_prf_eta3 <= 0; cbd_eta3_mode <= 0;
             pwma_acc_base <= 12'd0;
@@ -553,7 +577,8 @@ module kyber_main_fsm (
             add_main_d2 <= add_main_d1;
             add_main_d3 <= add_main_d2;
             add_main_d4 <= add_main_d3;
-            trng_trigger <= 0; hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0;
+            //trng_trigger <= 0; hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0;
+            hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0;
             hash_stream_en <= 0;
             if (hash_stream_ack) hash_stream_valid <= 0;
             ext_we <= 0; ext_re <= 0; fsm_we_a <= 0; fsm_we_b <= 0; fsm_ntt_we <= 0;
@@ -573,7 +598,8 @@ module kyber_main_fsm (
                     done <= 0;
                     if (start) begin
                         busy <= 1; dma_cnt <= 0; loop_i <= 0; loop_j <= 0;
-                        trng_sent <= 0; hash_sent <= 0; cbd_sent <= 0; ntt_sent <= 0; pwma_sent <= 0; cmp_sent <= 0; gm_sent <= 0;
+                        //trng_sent <= 0; hash_sent <= 0; cbd_sent <= 0; ntt_sent <= 0; pwma_sent <= 0; cmp_sent <= 0; gm_sent <= 0;
+                        hash_sent <= 0; cbd_sent <= 0; ntt_sent <= 0; pwma_sent <= 0; cmp_sent <= 0; gm_sent <= 0;
                         hash_fetching <= 1'b0;
                         fetch_wait <= 1'b0;
                         fetch_cnt <= 8'd0;
@@ -636,8 +662,8 @@ module kyber_main_fsm (
                 // KEYGEN: Sinh ngẫu nhiên
                 // ===========================================================
                 S_KG_TRNG: begin
-                    trng_req_bytes <= 2'b01; 
-                    if (!trng_sent) begin trng_trigger <= 1; trng_sent <= 1; end
+                    //trng_req_bytes <= 2'b01; 
+                    //if (!trng_sent) begin trng_trigger <= 1; trng_sent <= 1; end
                     if (trng_valid) begin
                         reg_trng_seed <= trng_data;
                         reg_z <= trng_data[255:0];
@@ -880,7 +906,7 @@ module kyber_main_fsm (
                             hash_stream_valid <= 1'b0;
                             if (opcode == 2'b10) begin
                                 state <= S_ENC_TRNG;
-                                trng_sent <= 1'b0;
+                                //trng_sent <= 1'b0;
                             end else begin
                                 state <= S_KG_WRITE_REST;
                                 pack_phase <= 2'd0;
@@ -1073,11 +1099,11 @@ module kyber_main_fsm (
                 end
 
                 S_ENC_TRNG: begin
-                    trng_req_bytes <= 2'b01;
+                    /*trng_req_bytes <= 2'b01;
                     if (!trng_sent) begin
                         trng_trigger <= 1'b1;
                         trng_sent <= 1'b1;
-                    end
+                    end*/
                     if (trng_valid) begin
                         // Align with C deterministic stream usage: encaps uses next 32 bytes window.
                         reg_m <= trng_data[511:256];

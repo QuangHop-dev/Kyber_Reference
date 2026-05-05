@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 module kyber_compressor (
-    input  wire [1:0] mode_k,       // 00: k=2 (Kyber512), 01: k=3, 10: k=4
+    //input  wire [1:0] mode_k,       // 00: k=2 (Kyber512), 01: k=3, 10: k=4
     input  wire mode_op,            // 0: Compress (Nén), 1: Decompress (Giải nén)
     input  wire [3:0] d_bits,       // Số bit nén: 10 (cho vector u), 4 (cho vector v), 1 (cho msg)
     input  wire signed [15:0] in_val, // Giá trị đầu vào

@@ -21,7 +21,8 @@ module tb_hpk_compare();
         .clk(clk), .rst(rst), .start(start),
         .opcode(opcode), .mode_k(mode_k),
         .done(done), .busy(busy),
-        .ext_we(ext_we), .ext_re(ext_re), .ext_addr(ext_addr), .ext_dout(ext_dout), .ext_din(ext_din), .ext_ready(1'b1)
+        //.ext_we(ext_we), .ext_re(ext_re), .ext_addr(ext_addr), .ext_dout(ext_dout), .ext_din(ext_din), .ext_ready(1'b1)
+    	.ext_we(ext_we), .ext_re(ext_re), .ext_addr(ext_addr), .ext_dout(ext_dout), .ext_din(ext_din), .ext_ready(1'b1), .seed_in(512'h2F07CD8F75BDFB1634842BFE259AD29C77B883658DC66CBADD252D93A3EBABF1A2B8D27BD63FF86D54C5E1E2F1294CA3142E047C0460B010E9D638825902EFDD), .seed_valid(1'b1)
     );
 
     assign ext_din = (ext_addr < 4096) ? tb_ram[ext_addr] : 32'd0;

@@ -6,6 +6,16 @@
 // - u(d=11): 8 coeffs <-> 11 bytes  (Kyber1024 polyvec_compress)
 // - v(d=4):  8 coeffs <-> 4 bytes   (Kyber512/768 poly_compress)
 // - v(d=5):  8 coeffs <-> 5 bytes   (Kyber1024 poly_compress)
+
+
+
+/*New
+	// Kyber512-only codec primitives:
+	// - u(d=10): 4 coeffs <-> 5 bytes
+	// - v(d=4):  8 coeffs <-> 4 bytes
+*/
+
+
 module kyber_codec (
     input  wire [2:0]   op,
     input  wire [127:0] coeff_in, // coeff[i] at coeff_in[i*16 +: 16]
@@ -15,12 +25,12 @@ module kyber_codec (
 );
     localparam OP_PACK_U10   = 3'd0;
     localparam OP_UNPACK_U10 = 3'd1;
-    localparam OP_PACK_U11   = 3'd2;
-    localparam OP_UNPACK_U11 = 3'd3;
+    //localparam OP_PACK_U11   = 3'd2;
+    //localparam OP_UNPACK_U11 = 3'd3;
     localparam OP_PACK_V4    = 3'd4;
     localparam OP_UNPACK_V4  = 3'd5;
-    localparam OP_PACK_V5    = 3'd6;
-    localparam OP_UNPACK_V5  = 3'd7;
+    //localparam OP_PACK_V5    = 3'd6;
+    //localparam OP_UNPACK_V5  = 3'd7;
 
     function [10:0] compress_d;
         input signed [15:0] c;
@@ -99,7 +109,7 @@ module kyber_codec (
                 coeff_out[63:48] = decompress_d(t3, 4'd10);
             end
 
-            OP_PACK_U11: begin
+            /*OP_PACK_U11: begin
                 t0 = compress_d(coeff_in[15:0],    4'd11);
                 t1 = compress_d(coeff_in[31:16],   4'd11);
                 t2 = compress_d(coeff_in[47:32],   4'd11);
@@ -164,7 +174,7 @@ module kyber_codec (
                 coeff_out[95:80]   = decompress_d(t5, 4'd11);
                 coeff_out[111:96]  = decompress_d(t6, 4'd11);
                 coeff_out[127:112] = decompress_d(t7, 4'd11);
-            end
+            end*/
 
             OP_PACK_V4: begin
                 t0 = compress_d(coeff_in[15:0],    4'd4);
@@ -198,7 +208,7 @@ module kyber_codec (
                 coeff_out[127:112] = decompress_d({7'd0, b3[7:4]}, 4'd4);
             end
 
-            OP_PACK_V5: begin
+            /*OP_PACK_V5: begin
                 t0 = compress_d(coeff_in[15:0],    4'd5);
                 t1 = compress_d(coeff_in[31:16],   4'd5);
                 t2 = compress_d(coeff_in[47:32],   4'd5);
@@ -250,7 +260,7 @@ module kyber_codec (
                 coeff_out[95:80]   = decompress_d(t5, 4'd5);
                 coeff_out[111:96]  = decompress_d(t6, 4'd5);
                 coeff_out[127:112] = decompress_d(t7, 4'd5);
-            end
+            end*/
 
             default: begin
                 coeff_out = 128'd0;

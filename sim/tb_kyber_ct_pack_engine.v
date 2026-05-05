@@ -20,7 +20,8 @@ module tb_kyber_ct_pack_engine;
     integer i;
 
     kyber_ct_pack_engine dut (
-        .clk(clk), .rst(rst), .start(start), .mode_k(mode_k), .ct_base_addr(32'd0),
+        //.clk(clk), .rst(rst), .start(start), .mode_k(mode_k), .ct_base_addr(32'd0),
+        .clk(clk), .rst(rst), .start(start), .ct_base_addr(32'd0),
         .u_addr(u_addr), .u_coeff_din(u_coeff_din),
         .v_addr(v_addr), .v_coeff_din(v_coeff_din),
         .ext_we(ext_we), .ext_addr(ext_addr), .ext_dout(ext_dout),

@@ -12,7 +12,7 @@ module kyber_ct_pack_engine (
     input  wire        clk,
     input  wire        rst,
     input  wire        start,
-    input  wire [1:0]  mode_k,
+    //input  wire [1:0]  mode_k,
     input  wire [31:0] ct_base_addr,
 
     // u coeff stream source (contiguous: poly0[0..255], poly1[...], ...)
@@ -45,16 +45,21 @@ module kyber_ct_pack_engine (
 
     reg [3:0] state;
 
-    wire [2:0] k_val = {1'b0, mode_k} + 3'd2; // 2/3/4
+    /*wire [2:0] k_val = {1'b0, mode_k} + 3'd2; // 2/3/4
     wire use_u11 = (mode_k == 2'b10);
     wire use_v5  = (mode_k == 2'b10);
 
     wire [3:0] u_group_sz      = use_u11 ? 4'd8  : 4'd4;
     wire [3:0] u_bytes_per_grp = use_u11 ? 4'd11 : 4'd5;
-    wire [6:0] u_groups_per_poly = use_u11 ? 7'd32 : 7'd64;
+    wire [6:0] u_groups_per_poly = use_u11 ? 7'd32 : 7'd64;*/
+    wire [2:0] k_val = 3'd2; // Kyber512 only
+    wire [3:0] u_group_sz      = 4'd4;
+    wire [3:0] u_bytes_per_grp = 4'd5;
+    wire [6:0] u_groups_per_poly = 7'd64;
     wire [9:0] u_total_groups  = {3'd0, k_val} * {3'd0, u_groups_per_poly};
     wire [3:0] v_group_sz      = 4'd8;
-    wire [3:0] v_bytes_per_grp = use_v5 ? 4'd5 : 4'd4;
+    //wire [3:0] v_bytes_per_grp = use_v5 ? 4'd5 : 4'd4;
+    wire [3:0] v_bytes_per_grp = 4'd4;
     wire [5:0] v_total_groups  = 6'd32;
     wire [31:0] u_total_bytes = {22'd0, u_total_groups} * {28'd0, u_bytes_per_grp};
     wire [31:0] v_total_bytes = {26'd0, v_total_groups} * {28'd0, v_bytes_per_grp};
@@ -101,9 +106,9 @@ module kyber_ct_pack_engine (
         end
     endtask
 
-    wire [8:0] u_poly_idx_w = use_u11 ? (group_idx / 9'd32) : (group_idx / 9'd64);
+    /*wire [8:0] u_poly_idx_w = use_u11 ? (group_idx / 9'd32) : (group_idx / 9'd64);
     wire [8:0] u_group_local_w = use_u11 ? (group_idx % 9'd32) : (group_idx % 9'd64);
-    wire [31:0] ct_idx_w = byte_idx + {28'd0, wr_idx};
+    wire [31:0] ct_idx_w = byte_idx + {28'd0, wr_idx};*/
 
     always @(posedge clk) begin
         if (rst) begin
@@ -167,7 +172,8 @@ module kyber_ct_pack_engine (
                 S_U_PACK: begin
                     codec_coeff_in <= {c7, c6, c5, c4, c3, c2, c1, c0};
                     codec_bytes_in <= 88'd0;
-                    codec_op <= use_u11 ? 3'd2 : 3'd0; // pack_u11 / pack_u10
+                    //codec_op <= use_u11 ? 3'd2 : 3'd0; // pack_u11 / pack_u10
+                    codec_op <= 3'd0; // pack_u10
                     wr_idx <= 4'd0;
                     state <= S_U_WRITE;
                 end
@@ -221,7 +227,8 @@ module kyber_ct_pack_engine (
                 S_V_PACK: begin
                     codec_coeff_in <= {c7, c6, c5, c4, c3, c2, c1, c0};
                     codec_bytes_in <= 88'd0;
-                    codec_op <= use_v5 ? 3'd6 : 3'd4; // pack_v5 / pack_v4
+                    //codec_op <= use_v5 ? 3'd6 : 3'd4; // pack_v5 / pack_v4
+                    codec_op <= 3'd4; // pack_v4
                     wr_idx <= 4'd0;
                     state <= S_V_WRITE;
                 end
