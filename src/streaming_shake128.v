@@ -1,131 +1,151 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// MODULE: streaming_shake128
-// SHAKE128 XOF với on-demand squeeze.
+// streaming_shake128 with 64-bit load/store Keccak-f[1600] backend
+// -----------------------------------------------------------------------------
+// External interface is kept identical to the original streaming_shake128.v, so
+// gen_matrix does not need to change.
 //
-// FIXES so với phiên bản cũ:
-//   1. absorb_start được xử lý ở MỌI state (fix deadlock: khi gen_matrix
-//      bắt đầu polynomial mới trong khi module đang ở SQUEEZE)
-//   2. Dùng wire absorbed_state (combinatorial) thay vì multiple partial NBA
-//      vào sponge_state → tránh lỗi Verilator
-//
-// Giao thức sử dụng:
-//   1. Pulse absorb_start, giữ din[271:0] hợp lệ (34 byte little-endian)
-//   2. Chờ squeeze_valid (pulse 1 chu kỳ) → squeeze_data[511:0] sẵn sàng
-//   3. Để lấy block tiếp: pulse squeeze_next, chờ squeeze_valid
-//
-// SHAKE128 rate = 1344 bit = 168 byte
-// Padding: 0x1F tại byte 34 (bits[279:272]), bit 1343 = end-of-pad
+// SHAKE128 rate = 1344 bit = 168 byte.
+// Input is fixed to 34 byte: rho || x || y, already arranged by gen_matrix.
 // =============================================================================
 
 module streaming_shake128 (
     input  wire        clk,
     input  wire        rst,
 
-    input  wire        absorb_start,   // Pulse - có thể gửi từ bất kỳ state nào
-    input  wire [271:0] din,            // 34 byte XOF input (Keccak little-endian)
+    input  wire        absorb_start,
+    input  wire [271:0] din,
 
-    input  wire        squeeze_next,   // Pulse: yêu cầu block 64-byte tiếp theo
-    output reg  [1343:0] squeeze_data, // 168-byte output block (SHAKE128 rate)
-    output reg         squeeze_valid,  // Pulse 1 chu kỳ
+    input  wire        squeeze_next,
+    output reg  [1343:0] squeeze_data,
+    output reg         squeeze_valid,
 
     output wire        busy
 );
 
-    localparam IDLE         = 2'd0;
-    localparam KECCAK_START = 2'd1;
-    localparam KECCAK_WAIT  = 2'd2;
-    localparam SQUEEZE      = 2'd3;
+    localparam IDLE         = 3'd0;
+    localparam PERM_LOAD    = 3'd1;
+    localparam PERM_START   = 3'd2;
+    localparam PERM_WAIT    = 3'd3;
+    localparam PERM_READ    = 3'd4;
+    localparam PERM_APPLY   = 3'd5;
+    localparam SQUEEZE      = 3'd6;
 
-    reg [1:0]    state;
+    reg [2:0]    state;
     reg [1599:0] sponge_state;
+    reg [1599:0] perm_result_state;
+    reg [4:0]    perm_idx;
 
-    reg  f_start;
-    wire f_done;
-    wire [1599:0] f_out;
+    // SHAKE128 fixed absorb block:
+    //   bits[271:0]    = 34-byte input
+    //   bits[279:272]  = 0x1F domain separator
+    //   bits[1342:280] = 0
+    //   bit[1343]      = 1 end-of-padding
+    //   bits[1599:1344]= capacity zero
+    wire [1599:0] absorbed_state;
+    assign absorbed_state = {
+        256'd0,
+        1'b1,
+        {1063{1'b0}},
+        8'h1F,
+        din
+    };
 
-    keccak_f1600 keccak_inst (
-        .clk     (clk),
-        .rst     (rst),
-        .start   (f_start),
-        .in_state(sponge_state),
-        .out_state(f_out),
-        .done    (f_done),
-        .busy    ()
+    // 64-bit load/store Keccak backend.
+    wire        k_load_we   = (state == PERM_LOAD);
+    wire [4:0]  k_load_addr = perm_idx;
+    wire [63:0] k_load_data = sponge_state[perm_idx*64 +: 64];
+    wire        k_start     = (state == PERM_START);
+    wire [4:0]  k_read_addr = perm_idx;
+    wire [63:0] k_read_data;
+    wire        k_done;
+    wire        k_busy;
+
+    keccak_f1600_64ls u_keccak64 (
+        .clk       (clk),
+        .rst       (rst),
+        .load_we   (k_load_we),
+        .load_addr (k_load_addr),
+        .load_data (k_load_data),
+        .start     (k_start),
+        .read_addr (k_read_addr),
+        .read_data (k_read_data),
+        .done      (k_done),
+        .busy      (k_busy)
     );
 
     assign busy = (state != IDLE);
 
-    // -------------------------------------------------------------------------
-    // Tính toán sponge state sau khi XOR input + padding (combinatorial)
-    // SHAKE128, 34-byte input, rate=1344 bit:
-    //   bits[271:0]   = din (34 bytes input)
-    //   bits[279:272] = 8'h1F (domain separator)
-    //   bits[1342:280]= 0
-    //   bit[1343]     = 1 (end-of-padding)
-    //   bits[1599:1344]= 0 (capacity)
-    //
-    // Khi sponge_state ban đầu = 0, XOR tương đương gán thẳng.
-    // -------------------------------------------------------------------------
-    wire [1599:0] absorbed_state;
-    assign absorbed_state = {
-        256'd0,              // capacity [1599:1344]
-        1'b1,                // end-of-pad [1343]
-        {1063{1'b0}},        // zero [1342:280]
-        8'h1F,               // domain sep [279:272]
-        din                  // input [271:0]
-    };
-    // Kiểm tra: 256 + 1 + 1063 + 8 + 272 = 1600 ✓
-
-    // -------------------------------------------------------------------------
-    // FSM
-    // -------------------------------------------------------------------------
     always @(posedge clk) begin
         if (rst) begin
-            state        <= IDLE;
-            sponge_state <= 1600'd0;
-            squeeze_data  <= 1344'd0;
-            squeeze_valid <= 1'b0;
-            f_start       <= 1'b0;
+            state             <= IDLE;
+            sponge_state      <= 1600'd0;
+            perm_result_state <= 1600'd0;
+            perm_idx          <= 5'd0;
+            squeeze_data      <= 1344'd0;
+            squeeze_valid     <= 1'b0;
         end else begin
-            f_start       <= 1'b0;
             squeeze_valid <= 1'b0;
 
-            // -----------------------------------------------------------------
-            // FIX BUG 1: absorb_start được ưu tiên xử lý ở MỌI state.
-            // Khi gen_matrix bắt đầu polynomial mới, module đang ở SQUEEZE,
-            // nếu không có điều kiện này sẽ deadlock.
-            // -----------------------------------------------------------------
+            // Keep the original bug fix: absorb_start has priority in every
+            // state, so gen_matrix can start a new polynomial even if this XOF
+            // is currently sitting in SQUEEZE.
             if (absorb_start) begin
-                sponge_state <= absorbed_state; // FIX BUG 2: single assignment
-                state        <= KECCAK_START;
+                sponge_state      <= absorbed_state;
+                perm_result_state <= 1600'd0;
+                perm_idx          <= 5'd0;
+                state             <= PERM_LOAD;
             end else begin
                 case (state)
                     IDLE: begin
-                        // Chờ absorb_start (đã xử lý ở trên)
+                        // Wait for absorb_start.
                     end
 
-                    KECCAK_START: begin
-                        f_start <= 1'b1;
-                        state   <= KECCAK_WAIT;
-                    end
-
-                    KECCAK_WAIT: begin
-                        if (f_done) begin
-                            sponge_state  <= f_out;
-                            squeeze_data  <= f_out[1343:0];
-                            squeeze_valid <= 1'b1;
-                            state         <= SQUEEZE;
+                    PERM_LOAD: begin
+                        if (perm_idx == 5'd24) begin
+                            perm_idx <= 5'd0;
+                            state    <= PERM_START;
+                        end else begin
+                            perm_idx <= perm_idx + 5'd1;
                         end
+                    end
+
+                    PERM_START: begin
+                        state <= PERM_WAIT;
+                    end
+
+                    PERM_WAIT: begin
+                        if (k_done) begin
+                            perm_result_state <= 1600'd0;
+                            perm_idx          <= 5'd0;
+                            state             <= PERM_READ;
+                        end
+                    end
+
+                    PERM_READ: begin
+                        perm_result_state[perm_idx*64 +: 64] <= k_read_data;
+                        if (perm_idx == 5'd24) begin
+                            perm_idx <= 5'd0;
+                            state    <= PERM_APPLY;
+                        end else begin
+                            perm_idx <= perm_idx + 5'd1;
+                        end
+                    end
+
+                    PERM_APPLY: begin
+                        sponge_state  <= perm_result_state;
+                        squeeze_data  <= perm_result_state[1343:0];
+                        squeeze_valid <= 1'b1;
+                        state         <= SQUEEZE;
                     end
 
                     SQUEEZE: begin
                         if (squeeze_next) begin
-                            // Permute lần tiếp (sponge_state đã có giá trị mới từ f_out)
-                            state <= KECCAK_START;
+                            perm_idx          <= 5'd0;
+                            perm_result_state <= 1600'd0;
+                            state             <= PERM_LOAD;
                         end
-                        // absorb_start đã xử lý ở nhánh if bên trên → không deadlock
                     end
 
                     default: state <= IDLE;
@@ -135,3 +155,4 @@ module streaming_shake128 (
     end
 
 endmodule
+

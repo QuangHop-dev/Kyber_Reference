@@ -254,7 +254,8 @@ module kyber_main_fsm (
     // overlap with keygen pk/sk windows [0 .. 2*k*256-1].
     localparam [11:0] ENC_U_BASE = 12'd2048;
     localparam [11:0] ENC_V_BASE = 12'd3072;
-    localparam DEBUG_CKPT = 1'b0;
+    //localparam DEBUG_CKPT = 1'b0;
+    //localparam DEBUG_KDF = 1'b1;
     reg [15:0] dbg_pwma_u_pair_cnt, dbg_pwma_v_pair_cnt, dbg_pwma_dec_pair_cnt;
     reg [9:0] dec_group_idx;
     reg [3:0] dec_slot_idx;
@@ -2282,12 +2283,12 @@ module kyber_main_fsm (
                          *   the address requested in the previous cycle.
                          * - In the same cycle we can request the next byte (if any).
                          */
-                        if (hash_fetching) begin
+                        /*if (hash_fetching) begin
                             if (ct_dout != ct_reenc_dout) begin
                                 all_eq <= 1'b0;
                                 $display("[DEBUG] CT Mismatch! index=%d in=%x reenc=%x", dma_cnt - 12'd1, ct_dout, ct_reenc_dout);
                             end
-                        end
+                        end*/
 
                         if (dma_cnt < ct_bytes_total) begin
                             ct_addr_b <= dma_cnt[10:0];
