@@ -50,8 +50,11 @@ module pwma_top (
     localparam WAIT_M1 = 4'd4;
     localparam WAIT_M2 = 4'd5;
     localparam WAIT_M3 = 4'd6;
-    localparam WRITE   = 4'd7;
-    localparam DONE_S  = 4'd8;
+    //localparam WRITE   = 4'd7;
+    //localparam DONE_S  = 4'd8;
+    localparam PREWRITE= 4'd7;
+    localparam WRITE   = 4'd8;
+    localparam DONE_S  = 4'd9;
 
     reg [3:0] state;
     reg [7:0] cnt;
@@ -78,6 +81,7 @@ module pwma_top (
     wire signed [15:0] base_c1_sel = use_tomont ? base_c1_tomont : base_c1;
     wire signed [15:0] acc_c0_raw = base_c0_sel + s3_c0_old;
     wire signed [15:0] acc_c1_raw = base_c1_sel + s3_c1_old;
+    reg  signed [15:0] ram1_din_c0_r, ram1_din_c1_r;
 
     basemul u_basemul (
         .clk(clk), .rst(rst),
@@ -90,8 +94,15 @@ module pwma_top (
     montgomery_reduce u_mont_tomont_c0 ( .a(base_c0_tomont_mul), .t(base_c0_tomont) );
     montgomery_reduce u_mont_tomont_c1 ( .a(base_c1_tomont_mul), .t(base_c1_tomont) );
 
-    barrett_reduce u_barrett_acc_c0 ( .a(acc_c0_raw), .out(ram1_din_c0) );
-    barrett_reduce u_barrett_acc_c1 ( .a(acc_c1_raw), .out(ram1_din_c1) );
+    //barrett_reduce u_barrett_acc_c0 ( .a(acc_c0_raw), .out(ram1_din_c0) );
+    //barrett_reduce u_barrett_acc_c1 ( .a(acc_c1_raw), .out(ram1_din_c1) );
+    wire signed [15:0] acc_c0_red;
+    wire signed [15:0] acc_c1_red;
+    barrett_reduce u_barrett_acc_c0 ( .a(acc_c0_raw), .out(acc_c0_red) );
+    barrett_reduce u_barrett_acc_c1 ( .a(acc_c1_raw), .out(acc_c1_red) );
+
+    assign ram1_din_c0 = ram1_din_c0_r;
+    assign ram1_din_c1 = ram1_din_c1_r;
 
     assign dbg_pair    = pair_hold;
     assign dbg_a0      = bm_a0;
@@ -122,6 +133,7 @@ module pwma_top (
             s1_zeta_base <= 16'sd0; s1_zeta_eff <= 16'sd0;
             s1_c0_old <= 16'sd0; s1_c1_old <= 16'sd0;
             s3_c0_old <= 16'sd0; s3_c1_old <= 16'sd0;
+            ram1_din_c0_r <= 16'sd0; ram1_din_c1_r <= 16'sd0;
         end else begin
             done <= 1'b0;
             ram1_we <= 1'b0;
@@ -178,6 +190,13 @@ module pwma_top (
 
                 WAIT_M3: begin
                     // basemul has a 3-stage registered output
+                    state <= PREWRITE;
+                end
+
+                PREWRITE: begin
+                    // Register write-back data to break long DSP->BRAM timing path
+                    ram1_din_c0_r <= acc_c0_red;
+                    ram1_din_c1_r <= acc_c1_red;
                     state <= WRITE;
                 end
 

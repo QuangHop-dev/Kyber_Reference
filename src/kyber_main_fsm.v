@@ -147,7 +147,7 @@ module kyber_main_fsm (
 
 
 
-    /*// --- 3.1 TRNG ---
+    /* --- 3.1 TRNG ---
     reg        trng_trigger; reg [1:0] trng_req_bytes; wire trng_valid; wire [511:0] trng_data;
     top_trng u_trng (.clk(clk), .rst(rst), .trigger(trng_trigger), .req_bytes(trng_req_bytes), .rand_data(trng_data), .valid(trng_valid));*/
     

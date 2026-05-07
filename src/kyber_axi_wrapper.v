@@ -178,6 +178,7 @@ module wrapper #(
     end*/
     
     reg [C_S_AXI_ADDR_WIDTH-1:0] awaddr_reg, araddr_reg;
+    reg aw_seen, w_seen;
     
     // AXI Read Address
     always @(posedge s_axi_aclk) begin
@@ -185,20 +186,34 @@ module wrapper #(
             s_axi_awready<=0; s_axi_wready<=0; s_axi_bvalid<=0; s_axi_bresp<=0; s_axi_bid<=0;
             s_axi_arready<=0; s_axi_rvalid<=0; s_axi_rresp<=0; s_axi_rid<=0; s_axi_rlast<=0; s_axi_rdata<=0;
             kyber_start<=0; kyber_opcode<=0; kyber_ext_ready<=0; kyber_ext_din<=0; awaddr_reg<=0; araddr_reg<=0;
+            aw_seen<=0; w_seen<=0;
         end else begin
             kyber_start<=0; kyber_ext_ready<=0;
-            s_axi_awready <= (!s_axi_awready && s_axi_awvalid && !s_axi_bvalid);
+            /*s_axi_awready <= (!s_axi_awready && s_axi_awvalid && !s_axi_bvalid);
             s_axi_wready  <= (!s_axi_wready  && s_axi_wvalid  && !s_axi_bvalid);
             if (s_axi_awready) begin awaddr_reg<=s_axi_awaddr; s_axi_bid<=s_axi_awid; end
-            if (s_axi_awready && s_axi_wready && s_axi_wvalid) begin
+            if (s_axi_awready && s_axi_wready && s_axi_wvalid) begin*/
+            s_axi_awready <= (!aw_seen && s_axi_awvalid && !s_axi_bvalid);
+            s_axi_wready  <= (!w_seen  && s_axi_wvalid  && !s_axi_bvalid);
+            if (!aw_seen && s_axi_awvalid) begin awaddr_reg<=s_axi_awaddr; s_axi_bid<=s_axi_awid; aw_seen<=1'b1; end
+            if (!w_seen  && s_axi_wvalid) w_seen<=1'b1;
+
+            if (aw_seen && w_seen && !s_axi_bvalid) begin
                 case (awaddr_reg[7:0])
                     8'h00: begin kyber_start<=s_axi_wdata[0]; kyber_opcode<=s_axi_wdata[2:1]; end
                     8'h08: kyber_ext_ready<=s_axi_wdata[0];
                     8'h18: kyber_ext_din<=s_axi_wdata;
                 endcase
+                s_axi_bvalid <= 1'b1;
+                s_axi_bresp  <= 2'b00;
             end
             
-            if (s_axi_bvalid && s_axi_bready) s_axi_bvalid<=1'b0;
+            //if (s_axi_bvalid && s_axi_bready) s_axi_bvalid<=1'b0;
+            if (s_axi_bvalid && s_axi_bready) begin
+                s_axi_bvalid<=1'b0;
+                aw_seen<=1'b0;
+                w_seen<=1'b0;
+            end
 
             s_axi_arready <= (!s_axi_arready && s_axi_arvalid && !s_axi_rvalid);
             if (s_axi_arready) begin
@@ -232,7 +247,7 @@ module wrapper #(
     assign status_led = {kyber_fsm_state[3:0], kyber_busy, kyber_done, kyber_ext_re, kyber_ext_we};
 endmodule
 
-    /*// AXI Read Address
+    /* AXI Read Address
     always @(posedge s_axi_aclk) begin
         if (~s_axi_aresetn) begin
             axi_arready <= 1'b0;
