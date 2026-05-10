@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 // =============================================================================
-// MODULE: kyber_main_fsm (KEYGEN COMPLETE)
+// MODULE: kyber_main_fsm (KEYGEN, ENCAP., DECAP. COMPLETE)
 // =============================================================================
 
 module kyber_main_fsm (
@@ -10,7 +10,6 @@ module kyber_main_fsm (
 
     input  wire        start,
     input  wire [1:0]  opcode,
-    input  wire [1:0]  mode_k,
     output reg         done,
     output reg         busy,
 
@@ -64,7 +63,6 @@ module kyber_main_fsm (
     reg [11:0] dma_cnt;
     reg [2:0]  loop_i, loop_j;
     reg [3:0]  dec_phase;
-    //wire [2:0] k_val = {1'b0, mode_k} + 3'd2; // 2/3/4 for Kyber512/768/1024
     wire [1:0] mode_k_locked = 2'b00; // Kyber512 only
     wire [2:0] k_val = 3'd2; // locked to Kyber512
     wire       ntt_dec_intt_gs_en;
@@ -143,13 +141,6 @@ module kyber_main_fsm (
         end
     endfunction
 
-
-
-
-
-    /* --- 3.1 TRNG ---
-    reg        trng_trigger; reg [1:0] trng_req_bytes; wire trng_valid; wire [511:0] trng_data;
-    top_trng u_trng (.clk(clk), .rst(rst), .trigger(trng_trigger), .req_bytes(trng_req_bytes), .rand_data(trng_data), .valid(trng_valid));*/
     
     // --- 3.1 External seed interface (TRNG removed) ---
     wire trng_valid; wire [511:0] trng_data;
@@ -178,7 +169,7 @@ module kyber_main_fsm (
 
     // --- 3.3.b Matrix Generator ---
     reg gm_start, gm_transposed; wire gm_we, gm_done; wire [11:0] gm_ram_addr; wire [15:0] gm_ram_din;
-    gen_matrix u_gm (.clk(clk), .rst(rst), .start(gm_start), .rho(reg_rho), .mode_k(mode_k), .transposed(gm_transposed), .we(gm_we), .ram_addr(gm_ram_addr), .ram_dout(gm_ram_din), .done(gm_done), .busy());
+    gen_matrix u_gm (.clk(clk), .rst(rst), .start(gm_start), .rho(reg_rho), .transposed(gm_transposed), .we(gm_we), .ram_addr(gm_ram_addr), .ram_dout(gm_ram_din), .done(gm_done), .busy());
 
     // --- 3.4 NTT Core ---
     reg ntt_start, ntt_mode; wire ntt_done; reg ntt_ext_we; reg [7:0] ntt_ext_addr; reg signed [15:0] ntt_ext_din;
@@ -580,6 +571,8 @@ module kyber_main_fsm (
             add_main_d4 <= add_main_d3;
             //trng_trigger <= 0; hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0;
             hash_start <= 0; cbd_start <= 0; ntt_start <= 0; pwma_start <= 0; cmp_start <= 0; gm_start <= 0;
+            cmp_data_c <= {24'd0, ct_dout};
+            cmp_data_c_prime <= {24'd0, ct_reenc_dout};
             hash_stream_en <= 0;
             if (hash_stream_ack) hash_stream_valid <= 0;
             ext_we <= 0; ext_re <= 0; fsm_we_a <= 0; fsm_we_b <= 0; fsm_ntt_we <= 0;
@@ -2269,13 +2262,17 @@ module kyber_main_fsm (
 
                 // Select Kbar' on match, else z
                 S_DEC_CMP: begin
-                    if (!hash_sent) begin
+                    /*if (!hash_sent) begin
                         hash_sent <= 1'b1;
                         dma_cnt   <= 12'd0;
                         all_eq    <= 1'b1;
                         hash_fetching <= 1'b0; // Reused as "compare-valid" flag
                         ct_addr_b <= 11'd0;
-                        ct_reenc_addr_b <= 11'd0;
+                        ct_reenc_addr_b <= 11'd0;*/
+                    if (!cmp_sent) begin
+                        cmp_sent   <= 1'b1;
+                        cmp_len    <= ct_bytes_total[10:0] - 11'd1;
+                        cmp_start  <= 1'b1;
                     end else begin
                         /*
                          * BRAM read path is synchronous (1-cycle latency):
@@ -2288,7 +2285,7 @@ module kyber_main_fsm (
                                 all_eq <= 1'b0;
                                 $display("[DEBUG] CT Mismatch! index=%d in=%x reenc=%x", dma_cnt - 12'd1, ct_dout, ct_reenc_dout);
                             end
-                        end*/
+                        end
 
                         if (dma_cnt < ct_bytes_total) begin
                             ct_addr_b <= dma_cnt[10:0];
@@ -2300,11 +2297,18 @@ module kyber_main_fsm (
                             dec_ct_match <= all_eq && (ct_dout == ct_reenc_dout);
                             if (!all_eq || (ct_dout != ct_reenc_dout)) begin
                                 reg_K_bar <= reg_z; // Fallback
-                            end
+                            end*/
+                        cmp_start <= 1'b0;
+                        ct_addr_b <= cmp_addr_c;
+                        ct_reenc_addr_b <= cmp_addr_c_prime;
+                        if (cmp_done) begin
+                            dec_ct_match <= ~cmp_not_equal;
+                            if (cmp_not_equal) reg_K_bar <= reg_z;
                             dec_reenc_mode <= 1'b0;
-                            dma_cnt <= 12'd0;
+                            /*dma_cnt <= 12'd0;
                             hash_sent <= 1'b0;
-                            hash_fetching <= 1'b0;
+                            hash_fetching <= 1'b0;*/
+                            cmp_sent <= 1'b0;
                             hash_stream_valid <= 1'b0;
                             state <= S_DEC_KDF;
                         end

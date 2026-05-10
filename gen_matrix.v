@@ -32,7 +32,6 @@ module gen_matrix (
     input  wire        start,
 
     input  wire [255:0] rho,        // big-endian: rho[0] tại bits[255:248]
-    input  wire [1:0]   mode_k,     // 00=k2, 01=k3, 10=k4
     input  wire         transposed,
 
     output reg          we,
@@ -141,8 +140,7 @@ module gen_matrix (
                 GM_IDLE: begin
                     done <= 1'b0;
                     if (start) begin
-                        // Tính k: mode_k=00→k=2, 01→k=3, 10→k=4
-                        k_val     <= {1'b0, mode_k} + 3'd2;
+                        k_val     <= 3'd2;
                         loop_i    <= 3'd0;
                         loop_j    <= 3'd0;
                         coeff_cnt <= 9'd0;
