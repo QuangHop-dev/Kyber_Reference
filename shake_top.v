@@ -19,6 +19,15 @@ module shake_top(
     input  wire [7:0]  stream_byte_len,
     output wire        stream_ack,
 
+    // Shared SHAKE128 XOF service for gen_matrix
+    input  wire        xof_req_valid,
+    input  wire [271:0] xof_req_din,
+    output wire        xof_req_ready,
+    input  wire        xof_release,
+    output wire [31:0] xof_word_data,
+    output wire        xof_word_valid,
+    input  wire        xof_word_ready,
+
     output wire [1535:0] dout,
     output wire          done,
     output wire          busy
@@ -41,6 +50,15 @@ module shake_top(
         .mode       (mode),
         .is_sha3    (is_sha3),
         .i_ack      (i_ack),
+
+        .xof_req_valid (xof_req_valid),
+        .xof_req_din   (xof_req_din),
+        .xof_req_ready (xof_req_ready),
+        .xof_release   (xof_release),
+        .xof_word_data (xof_word_data),
+        .xof_word_valid(xof_word_valid),
+        .xof_word_ready(xof_word_ready),
+
         .dout       (dout),
         .done       (done),
         .busy       (busy)
@@ -49,3 +67,4 @@ module shake_top(
     assign stream_ack = stream_en ? i_ack : 1'b0;
 
 endmodule
+

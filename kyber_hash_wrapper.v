@@ -11,13 +11,23 @@ module kyber_hash_wrapper (
     input  wire [1087:0] din,
     input  wire [7:0]  din_bytes,
 
-    // Streaming absorb (used for H(pk))
+    // Streaming absorb (used for H(pk), H(c))
     input  wire        stream_en,
     input  wire        stream_valid,
     input  wire        stream_last,
     input  wire [1087:0] stream_din,
     input  wire [7:0]  stream_bytes,
     output wire        stream_ack,
+
+    // Shared SHAKE128 XOF service for gen_matrix.
+    // gen_matrix uses this instead of instantiating its own streaming_shake128.
+    input  wire        xof_req_valid,
+    input  wire [271:0] xof_req_din,
+    output wire        xof_req_ready,
+    input  wire        xof_release,
+    output wire [31:0] xof_word_data,
+    output wire        xof_word_valid,
+    input  wire        xof_word_ready,
 
     output wire [1535:0] dout,
     output wire          done,
@@ -84,9 +94,19 @@ module kyber_hash_wrapper (
         .stream_din     (stream_din),
         .stream_byte_len(stream_bytes),
         .stream_ack     (stream_ack),
+
+        .xof_req_valid  (xof_req_valid),
+        .xof_req_din    (xof_req_din),
+        .xof_req_ready  (xof_req_ready),
+        .xof_release    (xof_release),
+        .xof_word_data  (xof_word_data),
+        .xof_word_valid (xof_word_valid),
+        .xof_word_ready (xof_word_ready),
+
         .dout           (dout),
         .done           (done),
         .busy           (busy)
     );
 
 endmodule
+

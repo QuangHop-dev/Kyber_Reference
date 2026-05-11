@@ -13,13 +13,13 @@ module ntt_core (
     input  wire [7:0]  ext_addr,
     input  wire signed [15:0] ext_din,
     output wire signed [15:0] ext_dout,
-    output wire signed [15:0] ext_dout_b, // ← MỚI: hệ số tại (ext_addr+1) cho PWMA
+    output wire signed [15:0] ext_dout_b, // �? MỚI: hệ số tại (ext_addr+1) cho PWMA
 
     output reg  done
 );
 
     // ==========================================
-    // 1. KHAI BÁO TÍN HIỆU NỘI BỘ
+    // 1. KHAI B�?O T�?N HIỆU NỘI BỘ
     // ==========================================
     reg [2:0] state;
     reg [2:0] stage;
@@ -46,14 +46,14 @@ module ntt_core (
     wire signed [15:0] bf_out_a, bf_out_b;
 
     // ==========================================
-    // 2. KHỞI TẠO CÁC MODULE CON
+    // 2. KHỞI TẠO C�?C MODULE CON
     // ==========================================
     address_generator u_addr_gen (
         .stage(stage), .inv_gs_en(intt_gs_en && mode), .cnt(cnt[6:0]),
         .addr_a(addr_a), .addr_b(addr_b), .twiddle_addr(twiddle_addr)
     );
 
-    twiddle_rom #(.MEMFILE("/home/lucas_pham/Kyber_Reference/src/zeta_values.mem")) u_twiddle (
+    twiddle_rom #(.MEMFILE("T:/demo05/src/zeta_values.mem")) u_twiddle (
         .clk(clk), .addr(twiddle_addr), .dout(zeta)
     );
 
@@ -88,7 +88,7 @@ module ntt_core (
     end
 
     // ==========================================
-    // 4. QUẢN LÝ ĐỊNH TUYẾN RAM
+    // 4. QUẢN L�? �?ỊNH TUYẾN RAM
     // ==========================================
 
     wire we_ram0_a = (state == IDLE) ? ext_we : (!is_even_stage ? delay_we[2] : 1'b0);
@@ -103,8 +103,8 @@ module ntt_core (
                                               : (we_ram1 ? delay_addr_a[2] : addr_a);
 
     // RAM1 port B:
-    //   IDLE → đọc hệ số LẺ = ext_addr + 1, cung cấp ext_dout_b cho PWMA
-    //   NTT  → write-back butterfly hoặc read addr_b bình thường
+    //   IDLE → đ�?c hệ số LẺ = ext_addr + 1, cung cấp ext_dout_b cho PWMA
+    //   NTT  → write-back butterfly hoặc read addr_b bình thư�?ng
     wire [7:0] ram1_addr_b = (state == IDLE) ? (ext_addr + 8'd1)
                                               : (we_ram1 ? delay_addr_b[2] : addr_b);
 

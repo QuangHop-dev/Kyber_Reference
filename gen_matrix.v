@@ -1,29 +1,17 @@
-`timescale 1ns/1ps
+`timescale 1ns / 1ps
 
 // =============================================================================
 // MODULE: gen_matrix
-// Sinh ma trận A (hoặc A^T) bằng SHAKE128 + rejection sampling.
+// Kyber512-only matrix generator / uniform sampler.
 //
-// Thuật toán:
-//   Với mỗi (i,j) trong ma trận k×k:
-//     seed = SHAKE128(rho || j || i)        [!transposed]
-//     seed = SHAKE128(rho || i || j)        [transposed]
-//     Rejection sampling: lấy 12-bit liên tiếp từ stream XOF
-//       → Chấp nhận nếu val < KYBER_Q=3329
-//     Ghi 256 hệ số vào RAM tại (i*k + j)*256
+// IMPORTANT ARCHITECTURAL CHANGE:
+//   This version does NOT instantiate streaming_shake128 / keccak_f1600.
+//   It requests SHAKE128 XOF words from the shared Hash-Core through a 32-bit
+//   valid/ready interface, then performs rejection sampling locally.
 //
-// FIXES so với phiên bản cũ:
-//   - Bỏ GM_XOF_WAIT (không cần check busy, keccak mất ~30 cycles nên
-//     gen_matrix đã ở GM_WAIT_SQ trước khi squeeze_valid đến)
-//   - streaming_shake128 đã sửa để nhận absorb_start từ mọi state
-//
-// Rejection sampling - shift register 12-bit/cycle:
-//   2 candidates từ mỗi 3 bytes (24 bits → 2×12 bits, LSB first)
-//   Với block SHAKE128 rate = 168 bytes = 1344 bits, chia hết cho 12
-//   nên không cần carry giữa các block.
-//
-// RAM layout (kyber_memory_map, địa chỉ 11-bit):
-//   Kyber-512 (k=2): A[0][0]=1024, A[0][1]=1280, A[1][0]=1536, A[1][1]=1792
+// Data flow:
+//   shared Hash-Core SHAKE128(rho || j || i) -> 32-bit words
+//   -> sample_buf -> 12-bit candidate -> accept if candidate < q
 // =============================================================================
 
 module gen_matrix (
@@ -31,8 +19,19 @@ module gen_matrix (
     input  wire        rst,
     input  wire        start,
 
-    input  wire [255:0] rho,        // big-endian: rho[0] tại bits[255:248]
+    input  wire [255:0] rho,        // big-endian: rho[0] at bits[255:248]
     input  wire         transposed,
+
+    // Request SHAKE128 XOF from shared Hash-Core.
+    output reg          xof_req_valid,
+    output reg  [271:0] xof_req_din,
+    input  wire         xof_req_ready,
+    output reg          xof_release,
+
+    // 32-bit XOF stream returned by shared Hash-Core.
+    input  wire [31:0]  xof_word_data,
+    input  wire         xof_word_valid,
+    output wire         xof_word_ready,
 
     output reg          we,
     output reg  [11:0]  ram_addr,
@@ -45,9 +44,6 @@ module gen_matrix (
     localparam KYBER_Q = 12'd3329;
     localparam BASE_A  = 12'd0;
 
-    // =========================================================================
-    // Hàm đảo byte
-    // =========================================================================
     function [255:0] flip_bytes_32;
         input [255:0] in_data;
         integer fi;
@@ -57,158 +53,138 @@ module gen_matrix (
         end
     endfunction
 
-    // =========================================================================
-    // streaming_shake128
-    // =========================================================================
-    reg          xof_absorb_start;
-    reg  [271:0] xof_din;
-    reg          xof_squeeze_next;
-    wire [1343:0] xof_squeeze_data;
-    wire         xof_squeeze_valid;
-    wire         xof_busy;
-
-    streaming_shake128 u_xof (
-        .clk          (clk),
-        .rst          (rst),
-        .absorb_start (xof_absorb_start),
-        .din          (xof_din),
-        .squeeze_next (xof_squeeze_next),
-        .squeeze_data (xof_squeeze_data),
-        .squeeze_valid(xof_squeeze_valid),
-        .busy         (xof_busy)
-    );
-
-    // =========================================================================
-    // Thanh ghi nội bộ
-    // =========================================================================
     reg [2:0]  loop_i, loop_j;
     reg [2:0]  k_val;
     reg [8:0]  coeff_cnt;     // 0..255
-    reg [11:0] poly_base;     // Base address trong RAM
+    reg [11:0] poly_base;     // Base address in RAM
 
-    reg [1343:0] bit_buf;     // 168-byte SHAKE128 block
-    reg [10:0]  bit_cnt;      // Số bit hợp lệ còn trong bit_buf
+    // Small sampler buffer instead of a 1344-bit SHAKE block bus.
+    reg [63:0] sample_buf;
+    reg [6:0]  sample_bits;
 
-    // =========================================================================
-    // FSM states
-    // =========================================================================
-    localparam GM_IDLE      = 3'd0;
-    localparam GM_XOF_INIT  = 3'd1;  // Bắt đầu XOF mới (không cần chờ busy)
-    localparam GM_WAIT_SQ   = 3'd2;  // Chờ squeeze_valid
-    localparam GM_LOAD      = 3'd3;  // Load squeeze_data + carry vào bit_buf
-    localparam GM_REJECT    = 3'd4;  // Rejection sampling 12-bit/cycle
-    localparam GM_WAIT_MORE = 3'd5;  // Hết dữ liệu, chờ squeeze_valid tiếp
-    localparam GM_NEXT_POLY = 3'd6;  // Chuyển sang polynomial tiếp theo
-    localparam GM_DONE      = 3'd7;
+    localparam GM_IDLE       = 3'd0;
+    localparam GM_XOF_INIT   = 3'd1;
+    localparam GM_XOF_ACCEPT = 3'd2;
+    localparam GM_WAIT_WORD  = 3'd3;
+    localparam GM_NEED_WORD  = 3'd4;
+    localparam GM_REJECT     = 3'd5;
+    localparam GM_NEXT_POLY  = 3'd6;
+    localparam GM_DONE       = 3'd7;
 
     reg [2:0] state;
 
     assign busy = (state != GM_IDLE);
 
-    // Candidate 12-bit và kiểm tra
-    wire [11:0] candidate    = bit_buf[11:0];
-    wire         candidate_ok = (candidate < KYBER_Q);
+    wire [11:0] candidate    = sample_buf[11:0];
+    wire        candidate_ok = (candidate < KYBER_Q);
 
-    // =========================================================================
-    // FSM
-    // =========================================================================
+    // sample_buf is 64 bits; only accept another 32-bit word when there is room.
+    // IMPORTANT: assert ready only in GM_NEED_WORD, after the new XOF request
+    // has definitely been accepted and old xof_word_valid has been flushed.
+    assign xof_word_ready = (state == GM_NEED_WORD) && (sample_bits <= 7'd32);
+
     always @(posedge clk) begin
         if (rst) begin
-            state            <= GM_IDLE;
-            we               <= 1'b0;
-            ram_addr         <= 12'd0;
-            ram_dout         <= 16'd0;
-            done             <= 1'b0;
-            xof_absorb_start <= 1'b0;
-            xof_squeeze_next <= 1'b0;
-            xof_din          <= 272'd0;
-            loop_i           <= 3'd0;
-            loop_j           <= 3'd0;
-            k_val            <= 3'd2;
-            coeff_cnt        <= 9'd0;
-            poly_base        <= 12'd0;
-            bit_buf          <= 1344'd0;
-            bit_cnt          <= 11'd0;
+            state         <= GM_IDLE;
+            we            <= 1'b0;
+            ram_addr      <= 12'd0;
+            ram_dout      <= 16'd0;
+            done          <= 1'b0;
+            xof_req_valid <= 1'b0;
+            xof_req_din   <= 272'd0;
+            xof_release   <= 1'b0;
+            loop_i        <= 3'd0;
+            loop_j        <= 3'd0;
+            k_val         <= 3'd2;
+            coeff_cnt     <= 9'd0;
+            poly_base     <= 12'd0;
+            sample_buf    <= 64'd0;
+            sample_bits   <= 7'd0;
         end else begin
             // Auto-clear strobes
-            xof_absorb_start <= 1'b0;
-            xof_squeeze_next <= 1'b0;
-            we               <= 1'b0;
+            xof_req_valid <= 1'b0;
+            xof_release   <= 1'b0;
+            we            <= 1'b0;
 
             case (state)
-                // ----------------------------------------------------------
                 GM_IDLE: begin
                     done <= 1'b0;
                     if (start) begin
-                        k_val     <= 3'd2;
-                        loop_i    <= 3'd0;
-                        loop_j    <= 3'd0;
-                        coeff_cnt <= 9'd0;
-                        poly_base <= BASE_A;
-                        bit_cnt    <= 11'd0;
-                        state      <= GM_XOF_INIT;
+                        k_val       <= 3'd2;
+                        loop_i      <= 3'd0;
+                        loop_j      <= 3'd0;
+                        coeff_cnt   <= 9'd0;
+                        poly_base   <= BASE_A;
+                        sample_buf  <= 64'd0;
+                        sample_bits <= 7'd0;
+                        state       <= GM_XOF_INIT;
                     end
                 end
 
-                // ----------------------------------------------------------
-                // Xây dựng XOF input và bắt đầu absorption.
-                // FIX: Bỏ GM_XOF_WAIT. Keccak mất ~30 cycles → gen_matrix
-                // chắc chắn ở GM_WAIT_SQ trước khi squeeze_valid đến.
-                // streaming_shake128 đã được sửa để nhận absorb_start
-                // từ bất kỳ state nào (kể cả SQUEEZE) → không deadlock.
-                // ----------------------------------------------------------
                 GM_XOF_INIT: begin
-                    // XOF input (little-endian cho Keccak):
-                    //   byte 0..31 = rho (flip từ big-endian)
-                    //   byte 32    = j hoặc i (tùy transposed)
-                    //   byte 33    = i hoặc j
+                    // XOF input little-endian for Keccak:
+                    //   byte 0..31 = rho flipped from big-endian
+                    //   byte 32    = j or i
+                    //   byte 33    = i or j
                     if (!transposed) begin
-                        xof_din <= { {5'd0, loop_i},     // byte33
-                                     {5'd0, loop_j},     // byte32
-                                     flip_bytes_32(rho) }; // byte0..31
+                        xof_req_din <= {
+                            {5'd0, loop_i},
+                            {5'd0, loop_j},
+                            flip_bytes_32(rho)
+                        };
                     end else begin
-                        xof_din <= { {5'd0, loop_j},
-                                     {5'd0, loop_i},
-                                     flip_bytes_32(rho) };
+                        xof_req_din <= {
+                            {5'd0, loop_j},
+                            {5'd0, loop_i},
+                            flip_bytes_32(rho)
+                        };
                     end
-                    xof_absorb_start <= 1'b1;
-                    coeff_cnt  <= 9'd0;
-                    bit_cnt    <= 11'd0;
-                    state      <= GM_WAIT_SQ;  // Không cần chờ busy
+
+                    coeff_cnt   <= 9'd0;
+                    sample_buf  <= 64'd0;
+                    sample_bits <= 7'd0;
+
+                    // Do not consume xof_word_valid immediately after request,
+                    // because the shared Hash-Core may still be holding a word
+                    // from the previous polynomial in XOF_WORD_OUT.
+                    state <= GM_XOF_ACCEPT;
                 end
 
-                // ----------------------------------------------------------
-                GM_WAIT_SQ: begin
-                    if (xof_squeeze_valid)
-                        state <= GM_LOAD;
+                GM_XOF_ACCEPT: begin
+                    // Hold request valid until the shared Hash-Core accepts it.
+                    // The accept happens in the Hash-Core on this clock edge.
+                    xof_req_valid <= 1'b1;
+                    if (xof_req_ready) begin
+                        state <= GM_WAIT_WORD;
+                    end
                 end
 
-                // ----------------------------------------------------------
-                // Load 1 SHAKE128 rate block (168 bytes = 1344 bits)
-                // ----------------------------------------------------------
-                GM_LOAD: begin
-                    bit_buf <= xof_squeeze_data;
-                    bit_cnt <= 11'd1344;
-                    state      <= GM_REJECT;
+                GM_WAIT_WORD: begin
+                    // One-cycle guard state. This avoids sampling the stale
+                    // xof_word_valid/xof_word_data left from the previous
+                    // polynomial when a new request is accepted from XOF_WORD_OUT.
+                    state <= GM_NEED_WORD;
                 end
 
-                // ----------------------------------------------------------
-                // Rejection sampling: 1 candidate 12-bit/cycle
-                // ----------------------------------------------------------
+                GM_NEED_WORD: begin
+                    if (xof_word_valid) begin
+                        sample_buf  <= sample_buf | ({32'd0, xof_word_data} << sample_bits);
+                        sample_bits <= sample_bits + 7'd32;
+                        state       <= GM_REJECT;
+                    end
+                end
+
                 GM_REJECT: begin
                     if (coeff_cnt == 9'd256) begin
-                        // Đủ 256 hệ số → polynomial tiếp theo
                         state <= GM_NEXT_POLY;
 
-                    end else if (bit_cnt < 11'd12) begin
-                        // Hết dữ liệu block hiện tại → xin thêm block kế tiếp
-                        xof_squeeze_next <= 1'b1;
-                        state <= GM_WAIT_MORE;
+                    end else if (sample_bits < 7'd12) begin
+                        state <= GM_NEED_WORD;
 
                     end else begin
-                        // Xử lý 1 candidate
-                        bit_buf <= bit_buf >> 12;
-                        bit_cnt <= bit_cnt - 11'd12;
+                        sample_buf  <= sample_buf >> 12;
+                        sample_bits <= sample_bits - 7'd12;
+
                         if (candidate_ok) begin
                             we        <= 1'b1;
                             ram_addr  <= poly_base + {3'd0, coeff_cnt[7:0]};
@@ -218,15 +194,6 @@ module gen_matrix (
                     end
                 end
 
-                // ----------------------------------------------------------
-                GM_WAIT_MORE: begin
-                    if (xof_squeeze_valid)
-                        state <= GM_LOAD;
-                end
-
-                // ----------------------------------------------------------
-                // Chuyển sang polynomial tiếp theo hoặc kết thúc
-                // ----------------------------------------------------------
                 GM_NEXT_POLY: begin
                     we <= 1'b0;
 
@@ -244,10 +211,11 @@ module gen_matrix (
                     end
                 end
 
-                // ----------------------------------------------------------
                 GM_DONE: begin
-                    done  <= 1'b1;
-                    state <= GM_IDLE;
+                    // Release shared Hash-Core back to IDLE.
+                    xof_release <= 1'b1;
+                    done        <= 1'b1;
+                    state       <= GM_IDLE;
                 end
 
                 default: state <= GM_IDLE;
@@ -256,3 +224,4 @@ module gen_matrix (
     end
 
 endmodule
+

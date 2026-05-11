@@ -146,4 +146,3 @@ module keccak_f1600(
     end
 
 endmodule
-
