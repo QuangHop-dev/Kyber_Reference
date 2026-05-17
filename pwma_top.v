@@ -53,8 +53,11 @@ module pwma_top (
     //localparam WRITE   = 4'd7;
     //localparam DONE_S  = 4'd8;
     localparam PREWRITE= 4'd7;
-    localparam WRITE   = 4'd8;
-    localparam DONE_S  = 4'd9;
+    //localparam WRITE   = 4'd8;
+    //localparam DONE_S  = 4'd9;
+    localparam WRDATA  = 4'd8;
+    localparam WRITE   = 4'd9;
+    localparam DONE_S  = 4'd10;
 
     reg [3:0] state;
     reg [7:0] cnt;
@@ -70,6 +73,8 @@ module pwma_top (
     reg signed [15:0] s1_c0_old, s1_c1_old;
 
     reg signed [15:0] s3_c0_old, s3_c1_old;
+    reg signed [15:0] s4_base_c0, s4_base_c1;
+    reg signed [15:0] s4_c0_old, s4_c1_old;
 
     wire signed [15:0] base_c0, base_c1;
     localparam signed [15:0] TOMONT_F = 16'sd1353; // (2^32 mod 3329)
@@ -79,8 +84,10 @@ module pwma_top (
 
     wire signed [15:0] base_c0_sel = use_tomont ? base_c0_tomont : base_c0;
     wire signed [15:0] base_c1_sel = use_tomont ? base_c1_tomont : base_c1;
-    wire signed [15:0] acc_c0_raw = base_c0_sel + s3_c0_old;
-    wire signed [15:0] acc_c1_raw = base_c1_sel + s3_c1_old;
+    //wire signed [15:0] acc_c0_raw = base_c0_sel + s3_c0_old;
+    //wire signed [15:0] acc_c1_raw = base_c1_sel + s3_c1_old;
+    wire signed [15:0] acc_c0_raw = s4_base_c0 + s4_c0_old;
+    wire signed [15:0] acc_c1_raw = s4_base_c1 + s4_c1_old;
     reg  signed [15:0] ram1_din_c0_r, ram1_din_c1_r;
 
     basemul u_basemul (
@@ -133,6 +140,8 @@ module pwma_top (
             s1_zeta_base <= 16'sd0; s1_zeta_eff <= 16'sd0;
             s1_c0_old <= 16'sd0; s1_c1_old <= 16'sd0;
             s3_c0_old <= 16'sd0; s3_c1_old <= 16'sd0;
+            s4_base_c0 <= 16'sd0; s4_base_c1 <= 16'sd0;
+            s4_c0_old <= 16'sd0; s4_c1_old <= 16'sd0;
             ram1_din_c0_r <= 16'sd0; ram1_din_c1_r <= 16'sd0;
         end else begin
             done <= 1'b0;
@@ -195,6 +204,16 @@ module pwma_top (
 
                 PREWRITE: begin
                     // Register write-back data to break long DSP->BRAM timing path
+                    // Capture accumulator operands (break DSP -> write-data timing path)
+                    s4_base_c0 <= base_c0_sel;
+                    s4_base_c1 <= base_c1_sel;
+                    s4_c0_old <= s3_c0_old;
+                    s4_c1_old <= s3_c1_old;
+                    state <= WRDATA;
+                end
+
+                WRDATA: begin
+                    // Register reduced write-back data
                     ram1_din_c0_r <= acc_c0_red;
                     ram1_din_c1_r <= acc_c1_red;
                     state <= WRITE;

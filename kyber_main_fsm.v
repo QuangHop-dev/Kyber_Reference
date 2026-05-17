@@ -42,6 +42,7 @@ module kyber_main_fsm (
     localparam S_DEC_READ = 8'd50; localparam S_DEC_DECOMP = 8'd51; localparam S_DEC_NTT_U = 8'd52; localparam S_DEC_PWMA_M = 8'd53; localparam S_DEC_INTT_M = 8'd54; localparam S_DEC_CMP = 8'd56; localparam S_DEC_KDF = 8'd57; localparam S_DEC_PACK = 8'd58;
     localparam S_DEC_READ_REST = 8'd55; localparam S_DEC_READ_CT = 8'd59;
     localparam S_KG_WRITE_REST = 8'd60; localparam S_KG_DMA_TRNG = 8'd61;
+    localparam S_DEC_RKPRF     = 8'd62;
 
     localparam [31:0] PK_EXT_BASE = 32'd0;
     localparam [31:0] SK_EXT_BASE = 32'd2000;
@@ -61,6 +62,7 @@ module kyber_main_fsm (
     // Core FSM/control regs declared early to avoid forward-use warnings.
     reg [7:0]  state;
     reg [11:0] dma_cnt;
+    reg [11:0] rk_abs;
     reg [2:0]  loop_i, loop_j;
     reg [3:0]  dec_phase;
     wire [1:0] mode_k_locked = 2'b00; // Kyber512 only
@@ -206,7 +208,7 @@ module kyber_main_fsm (
         (state == 8'd54) ? NTT_TAG_DEC_STU :
         NTT_TAG_NONE;
     wire signed [15:0] ntt_ext_dout;
-    wire signed [15:0] ntt_ext_dout_b; // �? MỚI: hệ s�' tại (ext_addr+1), dùng cho PWMA �'�?c s[2k+1]
+    wire signed [15:0] ntt_ext_dout_b; // \E2\86? MỚI: hệ s\E1\BB' tại (ext_addr+1), dùng cho PWMA \C4'\E1\BB?c s[2k+1]
     ntt_core u_ntt (.clk(clk), .rst(rst), .start(ntt_start), .mode(ntt_mode), .intt_gs_en(ntt_dec_intt_gs_en),
                     .dbg_tag(ntt_dbg_tag),
                     .ext_we(ntt_ext_we), .ext_addr(ntt_ext_addr), .ext_din(ntt_ext_din),
@@ -223,10 +225,10 @@ module kyber_main_fsm (
     wire signed [15:0] pwma_dbg_zeta, pwma_dbg_base_c0, pwma_dbg_base_c1;
     wire signed [15:0] pwma_dbg_t_old0, pwma_dbg_t_old1, pwma_dbg_t_new0, pwma_dbg_t_new1;
     
-    // �?�?c Twiddle Factor cho PWMA (Xử lý Item #17)
+    // \C4?\E1\BB?c Twiddle Factor cho PWMA (Xử lý Item #17)
     wire [15:0] pwma_zeta_real;
     wire [6:0]  pwma_zeta_addr;
-    twiddle_rom #(.MEMFILE("T:/demo05/src/zeta_values_pwma.mem")) u_twiddle_pwma ( 
+    twiddle_rom #(.MEMFILE("/home/lucas_pham/Kyber_Reference/src/zeta_values_pwma.mem")) u_twiddle_pwma ( 
         .clk(clk), .addr(pwma_zeta_addr), .dout(pwma_zeta_real)
     );
 
@@ -336,12 +338,12 @@ module kyber_main_fsm (
     wire [31:0] ct_pack_ext_addr, ct_pack_ext_dout;
     assign comp_in = dout_a;
 
-    // PWMA dùng cả 2 port của Main RAM �'ể �'�?c/ghi cặp t[2k], t[2k+1]
+    // PWMA dùng cả 2 port của Main RAM \C4'ể \C4'\E1\BB?c/ghi cặp t[2k], t[2k+1]
     assign we_a   = (mux_sel == 3'd1) ? cbd_we           : (mux_sel == 3'd2) ? pwma_ram1_we     : fsm_we_a;
     assign we_b   = (mux_sel == 3'd2) ? pwma_ram1_we     : fsm_we_b;
     
-    // t_i nằm ở Main RAM, m�-i hệ s�' 16-bit �'ộc lập:
-    // PWMA map pair index k -> �'ịa chỉ (2k, 2k+1)
+    // t_i nằm ở Main RAM, m\E1\BB-i hệ s\E1\BB' 16-bit \C4'ộc lập:
+    // PWMA map pair index k -> \C4'ịa chỉ (2k, 2k+1)
     assign addr_a = (mux_sel == 3'd1) ? {1'b0, cbd_ram_addr}
                  : (mux_sel == 3'd2) ? ( pwma_acc_base + ({8'd0, loop_i} * 12'd256) + {3'd0, pwma_ram1_addr, 1'b0} )
                  : fsm_addr_a;
@@ -352,7 +354,7 @@ module kyber_main_fsm (
                  : fsm_din_a;
     assign din_b  = (mux_sel == 3'd2) ? pwma_ram1_din_c1 : fsm_din_b;
 
-    // A matrix cache (offset 0..1023 cho k=2): cho phép PWMA �'�?c cặp A[2k], A[2k+1]
+    // A matrix cache (offset 0..1023 cho k=2): cho phép PWMA \C4'\E1\BB?c cặp A[2k], A[2k+1]
     wire [11:0] a_ij_cache_offset = ( {9'd0, loop_i} * {9'd0, k_val} + {9'd0, loop_j} ) * 12'd256;
     wire [11:0] a_cache_addr_even = a_ij_cache_offset + {3'd0, pwma_ram0_addr, 1'b0};
     wire [11:0] a_cache_addr_odd  = a_ij_cache_offset + {3'd0, pwma_ram0_addr, 1'b0} + 12'd1;
@@ -415,12 +417,12 @@ module kyber_main_fsm (
 
     always @(*) begin
         if (ntt_mux_sel == 3'd1) begin
-            // CBD �' NTT RAM (�'ịa chỉ 1:1)
+            // CBD \E2\86' NTT RAM (\C4'ịa chỉ 1:1)
             ntt_ext_we = cbd_we; ntt_ext_addr = cbd_ram_addr[7:0]; ntt_ext_din = cbd_poly_out;
         end else if (ntt_mux_sel == 3'd2) begin
-            // PWMA �'�?c s[j]: phát �'ịa chỉ CHẴN = 2 * pwma_ram0_addr
-            // �' NTT RAM port A: s[2k]   = ntt_ext_dout
-            // �' NTT RAM port B: s[2k+1] = ntt_ext_dout_b  (addr tự �'ộng = 2k+1)
+            // PWMA \C4'\E1\BB?c s[j]: phát \C4'ịa chỉ CHẴN = 2 * pwma_ram0_addr
+            // \E2\86' NTT RAM port A: s[2k]   = ntt_ext_dout
+            // \E2\86' NTT RAM port B: s[2k+1] = ntt_ext_dout_b  (addr tự \C4'ộng = 2k+1)
             ntt_ext_we = 1'b0;
             ntt_ext_addr = {pwma_ram0_addr[6:0], 1'b0}; // 2 * cnt, chẵn
             ntt_ext_din = 16'd0;
@@ -431,7 +433,7 @@ module kyber_main_fsm (
 
     always @(*) begin
         // s[j][2k]   = ntt_ext_dout   (NTT RAM port A, addr = 2k)
-        // s[j][2k+1] = ntt_ext_dout_b (NTT RAM port B, addr = 2k+1) �? FIX
+        // s[j][2k+1] = ntt_ext_dout_b (NTT RAM port B, addr = 2k+1) \E2\86? FIX
         pwma_ram0_dout_a0 = pwma_sp_from_scratch ? scratch_dout_a : ntt_ext_dout;
         pwma_ram0_dout_a1 = pwma_sp_from_scratch ? scratch_dout_b : ntt_ext_dout_b;
         // A[i,j][2k], A[i,j][2k+1] lấy từ A cache dual-port
@@ -696,7 +698,7 @@ module kyber_main_fsm (
                         // G input follows Kyber ref: coins || KYBER_K (2/3/4)
                         hash_din <= { 824'd0, {5'd0, k_val}, flip_bytes_32(trng_data[511:256]) };
                         dma_cnt <= 12'd0;
-                        state <= S_KG_DMA_TRNG; hash_sent <= 0;
+                        state <= S_KG_HASH_G; hash_sent <= 0;
                     end
                 end
 
@@ -731,10 +733,10 @@ module kyber_main_fsm (
                 end
 
                 // ===========================================================
-                // V�'NG LẶP E: Sinh e[i] -> NTT -> RAM offset 0x000 (L�  t ban �'ầu)
+                // V\C3'NG LẶP E: Sinh e[i] -> NTT -> RAM offset 0x000 (L\C3  t ban \C4'ầu)
                 // ===========================================================
                 S_KG_PRF_E: begin
-                    hash_cmd <= 3'd1; hash_bytes <= 8'd33; hash_prf_eta3 <= eta1_is_3; // e dùng eta1 (gi�'ng s)
+                    hash_cmd <= 3'd1; hash_bytes <= 8'd33; hash_prf_eta3 <= eta1_is_3; // e dùng eta1 (gi\E1\BB'ng s)
                     hash_din <= { 824'd0, {5'd0, loop_i + k_val}, flip_bytes_32(reg_sigma) };
                     if (!hash_sent) begin hash_start <= 1; hash_sent <= 1; end
                     else if (!hash_busy && !hash_done) begin
@@ -758,12 +760,12 @@ module kyber_main_fsm (
                 S_KG_DMA_E: begin
                     mux_sel <= 3'd0; ntt_mux_sel <= 3'd0;
                     fsm_ntt_addr <= dma_cnt[7:0];
-                    if (dma_cnt > 1) begin                                           // �? >0 �' >1
+                    if (dma_cnt > 1) begin                                           // \E2\86? >0 \E2\86' >1
                         fsm_we_a <= 1;
-                        fsm_addr_a <= (loop_i * 11'd256) + dma_cnt[10:0] - 11'd2;   // �? -1 �' -2
+                        fsm_addr_a <= (loop_i * 11'd256) + dma_cnt[10:0] - 11'd2;   // \E2\86? -1 \E2\86' -2
                         fsm_din_a  <= ntt_ext_dout;
                     end
-                    if (dma_cnt == 12'd257) begin                                    // �? 256 �' 257
+                    if (dma_cnt == 12'd257) begin                                    // \E2\86? 256 \E2\86' 257
                         dma_cnt <= 0;
                         if (loop_i == (k_val - 3'd1)) begin
                             loop_i <= 0;
@@ -777,11 +779,11 @@ module kyber_main_fsm (
                 end
 
                 // ===========================================================
-                // V�'NG LẶP S: Sinh s[i] -> NTT -> RAM offset 0x200 (Bảo lưu SK)
+                // V\C3'NG LẶP S: Sinh s[i] -> NTT -> RAM offset 0x200 (Bảo lưu SK)
                 // ===========================================================
                 S_KG_PRF_S: begin
                     hash_cmd <= 3'd1; hash_bytes <= 8'd33; hash_prf_eta3 <= eta1_is_3;
-                    hash_din <= { 824'd0, {5'd0, loop_j}, flip_bytes_32(reg_sigma) }; // �? loop_j
+                    hash_din <= { 824'd0, {5'd0, loop_j}, flip_bytes_32(reg_sigma) }; // \E2\86? loop_j
                     if (!hash_sent) begin hash_start <= 1; hash_sent <= 1; end
                     else if (!hash_busy && !hash_done) begin
                         hash_sent <= 1'b0;
@@ -804,12 +806,12 @@ module kyber_main_fsm (
                 S_KG_DMA_S: begin
                     mux_sel <= 3'd0; ntt_mux_sel <= 3'd0;
                     fsm_ntt_addr <= dma_cnt[7:0];
-                    if (dma_cnt > 1) begin                                           // �? �'ổi >0 th� nh >1
+                    if (dma_cnt > 1) begin                                           // \E2\86? \C4'ổi >0 th\C3 nh >1
                         fsm_we_a   <= 1;
                         fsm_addr_a <= sk_ram_base + ({9'd0, loop_j} * 12'd256) + dma_cnt[11:0] - 12'd2; // s[j] after t region
                         fsm_din_a  <= ntt_ext_dout;
                     end
-                    if (dma_cnt == 12'd257) begin                                    // �? �'ổi 256 th� nh 257
+                    if (dma_cnt == 12'd257) begin                                    // \E2\86? \C4'ổi 256 th\C3 nh 257
                         dma_cnt    <= 0;
                         loop_i     <= 0;
                         pwma_sent  <= 0;
@@ -818,16 +820,16 @@ module kyber_main_fsm (
                 end
 
                 // ===========================================================
-                // T� O MA TRẬN A: 1 lần duy nhất cho to� n bộ KxK
+                // T\E1\BA O MA TRẬN A: 1 lần duy nhất cho to\C3 n bộ KxK
                 // ===========================================================
                 S_KG_GEN_A: begin
                     mux_sel <= 3'd3;
                     if (!gm_sent) begin gm_start <= 1; gm_sent <= 1; end
                     if (gm_done) begin
-                        loop_j    <= 0;          // �? THÊM: reset loop_j
+                        loop_j    <= 0;          // \E2\86? THÊM: reset loop_j
                         loop_i    <= 0;
                         hash_sent <= 0;
-                        state     <= S_KG_PRF_S; // �? Bắt �'ầu vòng lặp s
+                        state     <= S_KG_PRF_S; // \E2\86? Bắt \C4'ầu vòng lặp s
                     end
                 end
 
@@ -839,7 +841,7 @@ module kyber_main_fsm (
                 // end
 
                 // S_KG_LOAD_S: begin
-                //     // �?�?c s[loop_j] từ Main RAM (Port B), nạp lại v� o bụng NTT Core
+                //     // \C4?\E1\BB?c s[loop_j] từ Main RAM (Port B), nạp lại v\C3 o bụng NTT Core
                 //     mux_sel <= 3'd0; ntt_mux_sel <= 3'd0;
                 //     fsm_addr_b <= 11'd512 + (loop_j * 11'd256) + dma_cnt[10:0];
                 //     fsm_ntt_addr <= dma_cnt[7:0] - 8'd1; // Delay 1 cycle
@@ -859,9 +861,9 @@ module kyber_main_fsm (
                     if (pwma_done) begin
                         pwma_sent <= 0;
                         if (loop_i == (k_val - 3'd1)) begin
-                            // Xong tất cả h� ng i cho cột j n� y
+                            // Xong tất cả h\C3 ng i cho cột j n\C3 y
                             if (loop_j == (k_val - 3'd1)) begin
-                                // Xong to� n bộ A*s+e: chuyển sang pack bytes chuẩn
+                                // Xong to\C3 n bộ A*s+e: chuyển sang pack bytes chuẩn
                                 pack_phase <= 2'd0;
                                 pack_poly  <= 3'd0;
                                 pack_pair  <= 8'd0;
@@ -877,14 +879,14 @@ module kyber_main_fsm (
                                 state     <= S_KG_PRF_S;   // Sinh s[j+1]
                             end
                         end else begin
-                            loop_i <= loop_i + 1;          // Sang h� ng tiếp theo
-                            // Không cần reset pwma_sent, �'ã set = 0 ở trên
+                            loop_i <= loop_i + 1;          // Sang h\C3 ng tiếp theo
+                            // Không cần reset pwma_sent, \C4'ã set = 0 ở trên
                         end
                     end
                 end
 
                 // ===========================================================
-                // �?�"NG G�"I
+                // \C4?\C3"NG G\C3"I
                 // ===========================================================
                 S_KG_HASH_PK: begin
                     hash_cmd <= 3'd2;
@@ -1704,7 +1706,7 @@ module kyber_main_fsm (
                 end
 
                 // KDF(Kbar || H(ct)) then write SS
-                S_ENC_KDF: begin
+                /*S_ENC_KDF: begin
                     hash_cmd   <= 3'd4; // KDF
                     hash_bytes <= 8'd64;
                     hash_din   <= {576'd0, flip_bytes_32(reg_H_c), flip_bytes_32(reg_K_bar)};
@@ -1733,7 +1735,32 @@ module kyber_main_fsm (
                             end
                         end
                     end
-                end
+                end*/
+                
+                // Official Kyber reference in this repo uses SS = Kbar.
+		// Do NOT apply extra KDF(Kbar || H(ct)) here.
+		S_ENC_KDF: begin
+		    if (!enc_kdf_ready) begin
+			dma_cnt       <= 12'd0;
+			hash_sent     <= 1'b0;
+			enc_kdf_ready <= 1'b1;
+		    end else begin
+			ext_we   <= 1'b1;
+			ext_addr <= SS_EXT_BASE + {20'd0, dma_cnt};
+			ext_dout <= {24'd0, reg_K_bar[255 - (dma_cnt[4:0] * 8) -: 8]};
+
+			if (ext_ready) begin
+			    if (dma_cnt == 12'd31) begin
+				state         <= S_IDLE;
+				done          <= 1'b1;
+				dma_cnt       <= 12'd0;
+				enc_kdf_ready <= 1'b0;
+			    end else begin
+				dma_cnt <= dma_cnt + 12'd1;
+			    end
+			end
+		    end
+		end
 
                 // Decaps:
                 // 1) reload s polyvec from external SK bytes (SK_EXT_BASE, packed d=12)
@@ -2304,7 +2331,7 @@ module kyber_main_fsm (
                     end else begin
                         cmp_start <= 1'b0;
 
-                        if (cmp_done) begin
+                        /*if (cmp_done) begin
                             dec_ct_match <= ~cmp_not_equal;
 
                             if (cmp_not_equal) begin
@@ -2320,7 +2347,28 @@ module kyber_main_fsm (
                             hash_fetching <= 1'b0;
                             hash_stream_valid <= 1'b0;
                             state <= S_DEC_KDF;
-                        end
+                        end*/
+                        if (cmp_done) begin
+			    dec_reenc_mode    <= 1'b0;
+			    cmp_sent          <= 1'b0;
+			    hash_sent         <= 1'b0;
+			    hash_fetching     <= 1'b0;
+			    fetch_wait        <= 1'b0;
+			    fetch_cnt         <= 8'd0;
+			    hash_stream_valid <= 1'b0;
+			    dma_cnt           <= 12'd0;
+
+			    if (cmp_not_equal) begin
+				// CCA reject path:
+				// C reference uses rkprf(ss, z, ct) = SHAKE256(z || ct).
+				// Do not return raw z.
+				state <= S_DEC_RKPRF;
+			    end else begin
+				// Valid path:
+				// C reference returns Kbar directly.
+				state <= S_DEC_PACK;
+			    end
+			end
                     end
                 end
 
@@ -2376,7 +2424,7 @@ module kyber_main_fsm (
                 end
 
                 // KDF(selected_key || H(ct)) and write SS
-                S_DEC_PACK: begin
+                /*S_DEC_PACK: begin
                     hash_cmd   <= 3'd4; // KDF
                     hash_bytes <= 8'd64;
                     hash_din   <= {576'd0, flip_bytes_32(reg_H_c), flip_bytes_32(reg_K_bar)};
@@ -2405,7 +2453,121 @@ module kyber_main_fsm (
                             end
                         end
                     end
-                end
+                end*/
+                
+                // CCA rejection path:
+		// rkprf(ss, z, ct) = SHAKE256(z || ct_bad), 32-byte output.
+		// Input length = 32 + 768 = 800 bytes.
+		// First 32 bytes are reg_z, next bytes are ct_dec_ram.
+		S_DEC_RKPRF: begin
+		    hash_cmd       <= 3'd4; // SHAKE256, 32-byte output
+		    hash_stream_en <= 1'b1;
+
+		    if (!hash_sent) begin
+			hash_sent         <= 1'b1;
+			dma_cnt           <= 12'd0;
+			hash_fetching     <= 1'b0;
+			fetch_wait        <= 1'b0;
+			fetch_cnt         <= 8'd0;
+			hash_stream_valid <= 1'b0;
+		    end else begin
+			if (!hash_stream_valid && dma_cnt < (ct_bytes_total + 12'd32)) begin
+			    if (!hash_fetching) begin
+				rem12 = (ct_bytes_total + 12'd32) - dma_cnt;
+
+				hash_stream_bytes <= (rem12 > 12'd136) ? 8'd136 : rem12[7:0];
+				hash_stream_last  <= (rem12 <= 12'd136);
+				hash_stream_din   <= 1088'd0;
+
+				fetch_cnt     <= 8'd0;
+				hash_fetching <= 1'b1;
+
+				if (dma_cnt >= 12'd32) begin
+				    ct_dec_addr_b <= dma_cnt[10:0] - 11'd32;
+				    fetch_wait    <= 1'b1;
+				end else begin
+				    fetch_wait <= 1'b0;
+				end
+			    end else if (fetch_wait) begin
+				fetch_wait    <= 1'b0;
+				ct_dec_addr_b <= ct_dec_addr_b + 11'd1;
+			    end else begin
+				rk_abs = dma_cnt + {4'd0, fetch_cnt};
+
+				if (rk_abs < 12'd32) begin
+				    // z bytes, same byte order as SK stores z.
+				    hash_stream_din[(fetch_cnt * 8) +: 8] <=
+				        reg_z[255 - (rk_abs[4:0] * 8) -: 8];
+
+				    if (fetch_cnt + 8'd1 == hash_stream_bytes) begin
+				        hash_fetching     <= 1'b0;
+				        hash_stream_valid <= 1'b1;
+				    end else begin
+				        fetch_cnt <= fetch_cnt + 8'd1;
+
+				        if ((rk_abs + 12'd1) >= 12'd32) begin
+				            ct_dec_addr_b <= 11'd0;
+				            fetch_wait    <= 1'b1;
+				        end
+				    end
+				end else begin
+				    // ciphertext bytes from ct_dec_ram
+				    hash_stream_din[(fetch_cnt * 8) +: 8] <= ct_dec_dout;
+
+				    if (fetch_cnt + 8'd1 == hash_stream_bytes) begin
+				        hash_fetching     <= 1'b0;
+				        hash_stream_valid <= 1'b1;
+				    end else begin
+				        fetch_cnt <= fetch_cnt + 8'd1;
+
+				        // Match existing H(ct) read pipeline style.
+				        ct_dec_addr_b <= rk_abs[10:0] - 11'd30;
+				    end
+				end
+			    end
+			end
+
+			if (hash_stream_ack) begin
+			    dma_cnt <= dma_cnt + {4'd0, hash_stream_bytes};
+			end
+		    end
+
+		    if (hash_done) begin
+			reg_K_bar         <= flip_bytes_32(hash_dout[255:0]);
+			hash_sent         <= 1'b0;
+			hash_fetching     <= 1'b0;
+			fetch_wait        <= 1'b0;
+			hash_stream_valid <= 1'b0;
+			dec_kdf_ready     <= 1'b0;
+			dma_cnt           <= 12'd0;
+			state             <= S_DEC_PACK;
+		    end
+		end
+                
+                // Official Kyber reference in this repo uses SS = selected Kbar.
+		// If compare failed earlier, reg_K_bar has already been replaced by z.
+		S_DEC_PACK: begin
+		    if (!dec_kdf_ready) begin
+			dma_cnt       <= 12'd0;
+			hash_sent     <= 1'b0;
+			dec_kdf_ready <= 1'b1;
+		    end else begin
+			ext_we   <= 1'b1;
+			ext_addr <= SS_EXT_BASE + {20'd0, dma_cnt};
+			ext_dout <= {24'd0, reg_K_bar[255 - (dma_cnt[4:0] * 8) -: 8]};
+
+			if (ext_ready) begin
+			    if (dma_cnt == 12'd31) begin
+				state         <= S_IDLE;
+				done          <= 1'b1;
+				dma_cnt       <= 12'd0;
+				dec_kdf_ready <= 1'b0;
+			    end else begin
+				dma_cnt <= dma_cnt + 12'd1;
+			    end
+			end
+		    end
+		end
                 default: state <= S_IDLE;
             endcase
         end
